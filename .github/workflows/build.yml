@@ -1,0 +1,88 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - run: flutter build appbundle --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipbridge-android
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: Zip Windows runner
+        shell: pwsh
+        run: |
+          $src = "build/windows/x64/runner/Release"
+          if (!(Test-Path "$src/clipbridge.exe")) { throw "missing clipbridge.exe" }
+          Compress-Archive -Path "$src/*" -DestinationPath "clipbridge-windows-x64.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipbridge-windows-x64
+          path: clipbridge-windows-x64.zip
+          if-no-files-found: error
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: clipbridge-windows-x64.zip
