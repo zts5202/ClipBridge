@@ -324,9 +324,10 @@ DWORD IntegrityLevel(HANDLE token) {
     return 0;
   }
   auto* label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(buffer.data());
-  DWORD* count = GetSidSubAuthorityCount(label->Label.Sid);
+  PUCHAR count = GetSidSubAuthorityCount(label->Label.Sid);
   if (count == nullptr || *count == 0) return 0;
-  DWORD* authority = GetSidSubAuthority(label->Label.Sid, *count - 1);
+  DWORD* authority =
+      GetSidSubAuthority(label->Label.Sid, static_cast<DWORD>(*count - 1));
   return authority == nullptr ? 0 : *authority;
 }
 
