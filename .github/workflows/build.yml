@@ -51,6 +51,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: ClipBridge ${{ github.ref_name }}
+          body: |
+            ClipBridge 1.0.0 是首个可安装版本：在同一局域网里，把 Android 手机和 Windows 电脑的剪贴板、图片和文件接在一起。不需要账号，也不经过公网。
+
+            - 发现与配对：同网 UDP 发现，新设备双方确认，已配对设备可自动重连
+            - 双向同步文字、图片（PNG/JPEG/WebP）和文件，带进度、校验和失败重试
+            - 电脑接收可选「仅剪贴板」，或「写入剪贴板并自动粘贴」；自动粘贴失败时仍保留剪贴板并通知
+
+            Android 的 APK 与 AAB 使用调试签名，便于直接安装试用。上架应用商店前请换成自己的签名。
+            真机 Wi-Fi、手机热点、记事本自动粘贴、Windows 托盘和 Android 前台服务仍需双机手测，步骤见 README 的手动测试清单。
           files: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/bundle/release/app-release.aab
@@ -85,4 +95,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: ClipBridge ${{ github.ref_name }}
+          body: |
+            ClipBridge 1.0.0 是首个可安装版本：在同一局域网里，把 Android 手机和 Windows 电脑的剪贴板、图片和文件接在一起。不需要账号，也不经过公网。
+
+            - 发现与配对：同网 UDP 发现，新设备双方确认，已配对设备可自动重连
+            - 双向同步文字、图片（PNG/JPEG/WebP）和文件，带进度、校验和失败重试
+            - 电脑接收可选「仅剪贴板」，或「写入剪贴板并自动粘贴」；自动粘贴失败时仍保留剪贴板并通知
+
+            Android 的 APK 与 AAB 使用调试签名，便于直接安装试用。上架应用商店前请换成自己的签名。
+            真机 Wi-Fi、手机热点、记事本自动粘贴、Windows 托盘和 Android 前台服务仍需双机手测，步骤见 README 的手动测试清单。
           files: clipbridge-windows-x64.zip
