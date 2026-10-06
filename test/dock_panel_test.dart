@@ -145,7 +145,7 @@ void main() {
     final controller = loaded!.controller;
     await pumpDock(tester, controller);
     expect(find.byKey(const Key('unpaired-guide')), findsOneWidget);
-    expect(find.text('在手机上打开 ClipBridge，确认配对'), findsOneWidget);
+    expect(find.text('在手机上打开剪贴坞，确认配对'), findsOneWidget);
     expect(find.text('未连接'), findsOneWidget);
     expect(find.byKey(const Key('dock-rescan')), findsOneWidget);
     await savePreview(tester, 'guide_light');

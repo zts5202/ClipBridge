@@ -16,7 +16,7 @@ class ClipBridgeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ClipBridge',
+      title: '剪贴坞',
       debugShowCheckedModeBanner: false,
       theme: Platform.isWindows ? buildDockTheme(Brightness.light) : buildClipTheme(Brightness.light),
       darkTheme: Platform.isWindows ? buildDockTheme(Brightness.dark) : buildClipTheme(Brightness.dark),

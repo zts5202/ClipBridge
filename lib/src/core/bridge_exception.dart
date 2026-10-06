@@ -34,7 +34,7 @@ String explainError(Object error) {
   }
   final text = error.toString();
   if (text.contains('SocketException') || text.contains('Connection refused')) {
-    return '无法连接。请确认同一局域网，并在 Windows 防火墙中允许 ClipBridge';
+    return '无法连接。请确认同一局域网，并在 Windows 防火墙中允许剪贴坞';
   }
   if (text.contains('timed out') || text.contains('TimeoutException')) {
     return '等待对方响应超时';

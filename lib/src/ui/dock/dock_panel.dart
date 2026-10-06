@@ -159,7 +159,7 @@ class DockHome extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              '在手机上打开 ClipBridge，确认配对',
+              '在手机上打开剪贴坞，确认配对',
               key: const Key('unpaired-guide'),
               style: dockFace(fontSize: 13, height: 1.35, color: scheme.onSurface),
             ),

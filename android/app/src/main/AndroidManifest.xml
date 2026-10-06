@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
     <application
-        android:label="ClipBridge"
+        android:label="剪贴坞"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

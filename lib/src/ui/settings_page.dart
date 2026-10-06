@@ -147,7 +147,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Text('权限与网络', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               const Text(
-                '手机需要通知权限，以便前台服务在后台保持局域网连接。图片和文件通过系统选择器读取，不申请整个存储空间。\n\n电脑首次启动若防火墙询问，请允许专用网络。热点场景下，让电脑连接手机打开的热点即可，不必同一台路由器。\n\n访客网络或 AP 隔离会让设备互相看不见。ClipBridge 只使用局域网，不会上传到云端。',
+                '手机需要通知权限，以便前台服务在后台保持局域网连接。图片和文件通过系统选择器读取，不申请整个存储空间。\n\n电脑首次启动若防火墙询问，请允许专用网络。热点场景下，让电脑连接手机打开的热点即可，不必同一台路由器。\n\n访客网络或 AP 隔离会让设备互相看不见。剪贴坞只使用局域网，不会上传到云端。',
               ),
               const SizedBox(height: 8),
               OutlinedButton(

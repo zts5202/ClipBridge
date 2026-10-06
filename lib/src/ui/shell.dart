@@ -103,7 +103,7 @@ class _ClipShellState extends State<ClipShell> with WidgetsBindingObserver {
       SettingsPage(controller: widget.controller),
     ];
     final wide = MediaQuery.sizeOf(context).width >= 960;
-    final titles = ['ClipBridge', '设备', '记录', '设置'];
+    final titles = ['剪贴坞', '设备', '记录', '设置'];
     return Scaffold(
       appBar: AppBar(title: Text(titles[_index])),
       body: wide
