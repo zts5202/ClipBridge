@@ -151,21 +151,29 @@ class SessionService {
     int port, {
     required String intent,
     String? expectedId,
+    Socket? socket,
+    bool quiet = false,
   }) async {
-    await onEvent(SessionStatusEvent(LinkPhase.connecting));
-    final socket = await Socket.connect(
-      host,
-      port,
-      timeout: const Duration(seconds: 6),
-    );
+    final connected = socket ??
+        await Socket.connect(
+          host,
+          port,
+          timeout: const Duration(seconds: 6),
+        );
+    try {
+      if (!quiet) await onEvent(SessionStatusEvent(LinkPhase.connecting));
+    } catch (error) {
+      await connected.close();
+      rethrow;
+    }
     final ready = Completer<void>();
     unawaited(
       _runLink(
-        socket,
+        connected,
         dialer: true,
         intent: intent,
         expectedId: expectedId,
-        emitDialErrors: true,
+        emitDialErrors: !quiet,
         readySignal: ready,
       ),
     );
