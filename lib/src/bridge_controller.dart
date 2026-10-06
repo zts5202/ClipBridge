@@ -16,6 +16,7 @@ import 'core/session_crypto.dart';
 import 'discovery/discovery_service.dart';
 import 'discovery/tether_probe.dart';
 import 'platform/clipboard_port.dart';
+import 'session/link_policy.dart';
 import 'session/session_service.dart';
 
 class BridgeLaunch {
@@ -105,6 +106,10 @@ class BridgeController extends ChangeNotifier {
   PairPrompt? _pairPrompt;
   ShareItem? _pendingShare;
   bool _suppressAuto = false;
+  int _backoffSeconds = 1;
+  DateTime _nextDialAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _lastBackoffAt;
+  final ConnectionNotices _notices = ConnectionNotices();
   bool _disposed = false;
   bool _outbound = false;
   bool _probing = false;
@@ -126,6 +131,7 @@ class BridgeController extends ChangeNotifier {
   Timer? _autoTimer;
   Timer? _clipTimer;
   Timer? _uiTimer;
+  Timer? _noticeTimer;
   bool _uiDirty = false;
   Future<void> _sendLock = Future<void>.value();
   StreamSubscription<ShareItem>? _shareSub;
@@ -282,12 +288,28 @@ class BridgeController extends ChangeNotifier {
   Future<void> attemptAutoReconnect() async {
     if (_disposed || _suppressAuto || _outbound || !_settings.autoReconnect) return;
     if (_linkBusy) return;
+    if (DateTime.now().isBefore(_nextDialAt)) {
+      cbLog('auto skip reason=backoff until=$_nextDialAt');
+      return;
+    }
     for (final peer in _discovered) {
       if (sharesUsbTetherSubnet(peer.host, _localAddresses)) continue;
-      if (_trust(peer.id) != null) {
-        await connectDiscovered(peer, manual: false);
-        return;
+      if (_trust(peer.id) == null) continue;
+      final dial = shouldAutoDialPeer(
+        localId: _identity.deviceId,
+        remoteId: peer.id,
+        localKind: kind,
+        peerOnUsbTether: false,
+      );
+      if (!dial) {
+        cbLog(
+          'auto skip peer=${peer.id} reason=initiator local=${_identity.deviceId}',
+        );
+        continue;
       }
+      cbLog('auto dial peer=${peer.id} initiator=local id=${_identity.deviceId}');
+      await connectDiscovered(peer, manual: false);
+      return;
     }
   }
 
@@ -299,6 +321,7 @@ class BridgeController extends ChangeNotifier {
 
   Future<void> _tetherOutbound() async {
     if (_disposed || kind != DeviceKind.pc || _suppressAuto || _linkBusy) return;
+    if (DateTime.now().isBefore(_nextDialAt)) return;
     final plan = planTetherDial(
       kind: kind,
       suppress: _suppressAuto,
@@ -376,6 +399,7 @@ class BridgeController extends ChangeNotifier {
     if (_disposed) return;
     _discovery.tetherLocals = next;
     if (_sameAddresses(next, _localAddresses)) return;
+    cbLog('network change from=$_localAddresses to=$next');
     _localAddresses = next;
     _touch(force: true);
   }
@@ -401,18 +425,41 @@ class BridgeController extends ChangeNotifier {
   @visibleForTesting
   void allowAutoReconnect() {
     _suppressAuto = false;
+    _clearBackoff();
+  }
+
+  void _clearBackoff() {
+    _backoffSeconds = 1;
+    _nextDialAt = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  void _armBackoff() {
+    final now = DateTime.now();
+    final recent = _lastBackoffAt;
+    if (recent != null && now.difference(recent) < const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastBackoffAt = now;
+    final wait = _backoffSeconds < 1 ? 1 : _backoffSeconds;
+    _nextDialAt = now.add(Duration(seconds: wait));
+    _backoffSeconds = nextBackoffSeconds(wait);
+    cbLog('backoff ${wait}s next=$_nextDialAt');
   }
 
   Future<void> connectDiscovered(
     DiscoveredPeer peer, {
     bool manual = true,
   }) async {
-    if (manual) _suppressAuto = false;
+    if (manual) {
+      _suppressAuto = false;
+      _clearBackoff();
+    }
     await _dial(
       host: peer.host,
       port: peer.tcpPort,
       intent: manual ? 'manual' : 'auto',
       expectedId: peer.id,
+      replaceExisting: manual,
     );
   }
 
@@ -423,10 +470,16 @@ class BridgeController extends ChangeNotifier {
     String? expectedId,
     bool quiet = false,
     bool tether = false,
+    bool replaceExisting = false,
     Socket? socket,
   }) async {
     if (_outbound) {
       await socket?.close();
+      return;
+    }
+    if (!replaceExisting && _session.hasLiveLink) {
+      await socket?.close();
+      cbLog('dial skip host=$host reason=already-connected');
       return;
     }
     _outbound = true;
@@ -435,7 +488,7 @@ class BridgeController extends ChangeNotifier {
       _tetherDialPeerId = expectedId;
     }
     try {
-      if (_session.hasLiveLink) await _session.disconnect();
+      if (replaceExisting && _session.hasLiveLink) await _session.disconnect();
       await _session.dial(
         host,
         port,
@@ -445,7 +498,25 @@ class BridgeController extends ChangeNotifier {
         socket: socket,
       );
     } catch (error) {
-      if (!quiet) _setError(explainError(error));
+      final code = error is BridgeException ? error.code : '';
+      if (_session.hasLiveLink ||
+          code == 'duplicate' ||
+          code == 'yield' ||
+          code == 'replaced') {
+        cbLog('dial ignored code=$code');
+        return;
+      }
+      if (intent == 'manual' && !quiet) {
+        _setError(explainError(error));
+        return;
+      }
+      if (!quiet) {
+        _phase = LinkPhase.error;
+        _detail = explainError(error);
+        _touch(force: true);
+      }
+      _armBackoff();
+      cbLog('dial failed intent=$intent host=$host code=$code');
     } finally {
       _outbound = false;
     }
@@ -458,10 +529,12 @@ class BridgeController extends ChangeNotifier {
       return;
     }
     _suppressAuto = false;
+    _clearBackoff();
     await _dial(
       host: parsed.host,
       port: parsed.port ?? 47822,
       intent: 'manual',
+      replaceExisting: true,
     );
   }
 
@@ -471,6 +544,9 @@ class BridgeController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _suppressAuto = true;
+    _noticeTimer?.cancel();
+    _noticeTimer = null;
+    _notices.cancelPending();
     _pairPrompt = null;
     await _session.disconnect();
     _peerName = null;
@@ -512,7 +588,10 @@ class BridgeController extends ChangeNotifier {
           : next.deviceName.trim(),
     );
     _settings = normalized;
-    if (!wasAuto && normalized.autoReconnect) _suppressAuto = false;
+    if (!wasAuto && normalized.autoReconnect) {
+      _suppressAuto = false;
+      _clearBackoff();
+    }
     _session.deviceName = normalized.deviceName;
     _discovery.updateSelf(name: normalized.deviceName);
     await _saveSettings();
@@ -666,6 +745,7 @@ class BridgeController extends ChangeNotifier {
     _autoTimer?.cancel();
     _clipTimer?.cancel();
     _uiTimer?.cancel();
+    _noticeTimer?.cancel();
     await _shareSub?.cancel();
     await _traySub?.cancel();
     await _discovery.stop();
@@ -691,6 +771,9 @@ class BridgeController extends ChangeNotifier {
       case SessionReadyEvent():
         _tetherDial = false;
         _tetherDialPeerId = null;
+        _noticeTimer?.cancel();
+        _noticeTimer = null;
+        _clearBackoff();
         _phase = LinkPhase.ready;
         _pairPrompt = null;
         _peerId = event.peerId;
@@ -700,7 +783,8 @@ class BridgeController extends ChangeNotifier {
         _upsertPeer(event);
         _touch(force: true);
         await _updatePresence();
-        _toast('已连接 ${event.name}');
+        final notice = _notices.onConnected(DateTime.now(), event.name);
+        if (notice != null) _toast(notice);
       case SessionJsonEvent():
         await _onJson(event.json);
       case SessionChunkEvent():
@@ -721,11 +805,21 @@ class BridgeController extends ChangeNotifier {
         _peerKind = null;
         _peerId = null;
         if (event.reason == 'local') {
+          _noticeTimer?.cancel();
+          _noticeTimer = null;
+          _notices.cancelPending();
           _phase = LinkPhase.discovering;
         } else {
           _phase = LinkPhase.error;
           _detail = explainError(BridgeException(event.reason));
-          _toast(_detail!);
+          _armBackoff();
+          _notices.onDisconnected(DateTime.now());
+          _noticeTimer ??= Timer(const Duration(seconds: 10), () {
+            _noticeTimer = null;
+            if (_disposed || _phase == LinkPhase.ready) return;
+            final notice = _notices.onDisconnected(DateTime.now());
+            if (notice != null) _toast(notice);
+          });
         }
         _touch(force: true);
         await _updatePresence();

@@ -42,6 +42,12 @@ std::wstring Utf8ToWide(const std::string& text) {
   return out;
 }
 
+// Tray menu labels are ASCII hex so the binary stays correct even if /utf-8 is
+// dropped. Notifications, tooltip updates, and Explorer paths already call
+// Utf8ToWide. The window title is ASCII "ClipBridge". File dialogs are the
+// file_picker plugin, which takes Flutter UTF-8 strings.
+std::wstring MenuText(const char* utf8) { return Utf8ToWide(utf8); }
+
 std::string WideToUtf8(const wchar_t* text) {
   if (text == nullptr || text[0] == L'\0') return "";
   int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr,
@@ -395,17 +401,25 @@ void AddTrayIcon() {
   g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   g_nid.uCallbackMessage = kTrayCallback;
   g_nid.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(101));
-  wcscpy_s(g_nid.szTip, L"ClipBridge 正在局域网待命");
+  const std::wstring initialTip = MenuText(
+      "ClipBridge \xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB1\x80\xE5\x9F\x9F\xE7\xBD\x91\xE5\xBE\x85\xE5\x91\xBD");
+  wcsncpy_s(g_nid.szTip, initialTip.c_str(), _TRUNCATE);
   g_tray_added = Shell_NotifyIconW(NIM_ADD, &g_nid) == TRUE;
 }
 
 void ShowTrayMenu() {
   HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, kCmdShow, L"显示主窗口");
-  AppendMenuW(menu, MF_STRING, kCmdHide, L"隐藏主窗口");
-  AppendMenuW(menu, MF_STRING, kCmdPause, g_paused ? L"继续同步" : L"暂停同步");
+  const std::wstring show = MenuText("\xE6\x98\xBE\xE7\xA4\xBA\xE4\xB8\xBB\xE7\xAA\x97\xE5\x8F\xA3");
+  const std::wstring hide = MenuText("\xE9\x9A\x90\xE8\x97\x8F\xE4\xB8\xBB\xE7\xAA\x97\xE5\x8F\xA3");
+  const std::wstring pause = MenuText(
+      g_paused ? "\xE7\xBB\xA7\xE7\xBB\xAD\xE5\x90\x8C\xE6\xAD\xA5"
+               : "\xE6\x9A\x82\xE5\x81\x9C\xE5\x90\x8C\xE6\xAD\xA5");
+  const std::wstring quit = MenuText("\xE9\x80\x80\xE5\x87\xBA");
+  AppendMenuW(menu, MF_STRING, kCmdShow, show.c_str());
+  AppendMenuW(menu, MF_STRING, kCmdHide, hide.c_str());
+  AppendMenuW(menu, MF_STRING, kCmdPause, pause.c_str());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, kCmdQuit, L"退出");
+  AppendMenuW(menu, MF_STRING, kCmdQuit, quit.c_str());
   POINT point;
   GetCursorPos(&point);
   SetForegroundWindow(g_hwnd);

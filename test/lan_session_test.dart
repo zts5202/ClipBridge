@@ -5,6 +5,7 @@ import 'package:clipbridge/src/bridge_controller.dart';
 import 'package:clipbridge/src/core/models.dart';
 import 'package:clipbridge/src/discovery/discovery_service.dart';
 import 'package:clipbridge/src/platform/clipboard_port.dart';
+import 'package:clipbridge/src/session/link_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> waitFor(bool Function() predicate, {String? why}) async {
@@ -125,17 +126,35 @@ void main() {
       why: '超限文件没有被拒绝',
     );
 
+    await phone.attemptAutoReconnect();
+    await pc.attemptAutoReconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(phone.isReady && pc.isReady, isTrue);
+    expect(
+      [...clipA.notifications, ...clipB.notifications].where((item) => item.contains('已断开')),
+      isEmpty,
+    );
+
     await phone.disconnect();
     expect(phone.isReady, isFalse);
     phone.allowAutoReconnect();
     phone.setDirectAnnouncements([
       DirectTarget(InternetAddress.loopbackIPv4, pc.discoveryPort),
     ]);
-    await waitFor(
-      () => phone.discovered.any((peer) => peer.id == pc.deviceId),
-      why: '断开后没有重新发现电脑',
+    final phoneDials = shouldAutoDialPeer(
+      localId: phone.deviceId,
+      remoteId: pc.deviceId,
+      localKind: DeviceKind.phone,
+      peerOnUsbTether: false,
     );
-    await phone.attemptAutoReconnect();
+    final initiator = phoneDials ? phone : pc;
+    final targetId = phoneDials ? pc.deviceId : phone.deviceId;
+    initiator.allowAutoReconnect();
+    await waitFor(
+      () => initiator.discovered.any((peer) => peer.id == targetId),
+      why: '断开后发起方没有重新发现对端',
+    );
+    await initiator.attemptAutoReconnect();
     await waitFor(() => phone.isReady && pc.isReady, why: '已配对设备没有自动重连');
     expect(phone.pairPrompt, isNull);
     expect(pc.pairPrompt, isNull);
