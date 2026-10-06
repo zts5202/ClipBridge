@@ -29,7 +29,7 @@ class BridgeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "ClipBridge 正在局域网待命"
+        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "剪贴坞正在局域网待命"
         val notification = buildNotification(text)
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
@@ -57,7 +57,7 @@ class BridgeService : Service() {
             "局域网连接",
             NotificationManager.IMPORTANCE_LOW,
         )
-        channel.description = "保持 ClipBridge 在局域网中可被发现"
+        channel.description = "保持剪贴坞在局域网中可被发现"
         manager.createNotificationChannel(channel)
         val alerts = NotificationChannel(
             ALERT_CHANNEL_ID,
@@ -75,7 +75,7 @@ class BridgeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("ClipBridge")
+            .setContentTitle("剪贴坞")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setContentIntent(launch)
@@ -97,7 +97,7 @@ class BridgeService : Service() {
         fun update(context: Context, text: String) {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
             val notification = Notification.Builder(context, CHANNEL_ID)
-                .setContentTitle("ClipBridge")
+                .setContentTitle("剪贴坞")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
                 .setOngoing(true)

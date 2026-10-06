@@ -40,12 +40,12 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "startService" -> {
                     requestNotifications()
-                    val text = call.argument<String>("text") ?: "ClipBridge 正在局域网待命"
+                    val text = call.argument<String>("text") ?: "剪贴坞正在局域网待命"
                     BridgeService.start(this, text)
                     result.success(null)
                 }
                 "updateService" -> {
-                    val text = call.argument<String>("text") ?: "ClipBridge 正在局域网待命"
+                    val text = call.argument<String>("text") ?: "剪贴坞正在局域网待命"
                     BridgeService.update(this, text)
                     result.success(null)
                 }
@@ -56,7 +56,7 @@ class MainActivity : FlutterActivity() {
                 "getClipboardText" -> result.success(readClipboardText())
                 "setClipboardText" -> {
                     val text = call.argument<String>("text") ?: ""
-                    clipboard().setPrimaryClip(ClipData.newPlainText("ClipBridge", text))
+                    clipboard().setPrimaryClip(ClipData.newPlainText("剪贴坞", text))
                     clipSequence += 1
                     result.success(null)
                 }
@@ -67,7 +67,7 @@ class MainActivity : FlutterActivity() {
                         result.error("clipboard", "缺少图片数据", null)
                     } else {
                         publishBytes(bytes, "clipbridge.png", "image/png", gallery = true)?.let { uri ->
-                            clipboard().setPrimaryClip(ClipData.newUri(contentResolver, "ClipBridge", uri))
+                            clipboard().setPrimaryClip(ClipData.newUri(contentResolver, "剪贴坞", uri))
                             clipSequence += 1
                         }
                         result.success(null)
@@ -76,7 +76,7 @@ class MainActivity : FlutterActivity() {
                 "getClipboardSequence" -> result.success(clipSequence)
                 "pasteCtrlV" -> result.success(mapOf("ok" to false, "reason" to "unsupported"))
                 "notify" -> {
-                    val title = call.argument<String>("title") ?: "ClipBridge"
+                    val title = call.argument<String>("title") ?: "剪贴坞"
                     val body = call.argument<String>("body") ?: ""
                     val sound = call.argument<Boolean>("sound") ?: false
                     showAlert(title, body, sound)
@@ -322,7 +322,7 @@ class MainActivity : FlutterActivity() {
         try {
             startActivity(view)
         } catch (_: Exception) {
-            showAlert("ClipBridge", path, false)
+            showAlert("剪贴坞", path, false)
         }
     }
 }

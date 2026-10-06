@@ -272,7 +272,7 @@ class BridgeController extends ChangeNotifier {
     _traySub = clipboard.trayActions.listen(_onTray);
     final pending = await clipboard.takePendingShare();
     if (pending != null) await _ingestShare(pending);
-    final presence = 'ClipBridge 正在局域网待命';
+    final presence = '剪贴坞正在局域网待命';
     await clipboard.startPresence(presence);
     await clipboard.trayUpdate(tooltip: presence, paused: _settings.paused);
     _touch(force: true);
@@ -1274,7 +1274,7 @@ class BridgeController extends ChangeNotifier {
     final result = await clipboard.tryPaste();
     if (result.ok) return '$clipboardDetail，并已自动粘贴';
     final reason = switch (result.reason) {
-      'self' => '当前焦点在 ClipBridge 窗口，请先点到记事本等目标窗口',
+      'self' => '当前焦点在剪贴坞窗口，请先点到记事本等目标窗口',
       'elevated' => '目标窗口以更高权限运行，系统不允许模拟按键',
       'sendinput' => '系统拒绝了模拟按键',
       'no_window' => '没有可粘贴的前台窗口',
@@ -1282,7 +1282,7 @@ class BridgeController extends ChangeNotifier {
       _ => '自动粘贴失败',
     };
     final message = '已写入剪贴板。自动粘贴未成功：$reason';
-    await clipboard.notify('ClipBridge', message, sound: _settings.notificationSound);
+    await clipboard.notify('剪贴坞', message, sound: _settings.notificationSound);
     return message;
   }
 
@@ -1459,12 +1459,12 @@ class BridgeController extends ChangeNotifier {
   void _toast(String message) {
     if (_disposed) return;
     toasts.add(message);
-    unawaited(clipboard.notify('ClipBridge', message, sound: _settings.notificationSound));
+    unawaited(clipboard.notify('剪贴坞', message, sound: _settings.notificationSound));
   }
 
   Future<void> _updatePresence() async {
     final text = _peerName == null
-        ? 'ClipBridge 正在局域网待命'
+        ? '剪贴坞正在局域网待命'
         : '已连接 $_peerName';
     final label = _settings.paused ? '$text（已暂停）' : text;
     await clipboard.updatePresence(label);

@@ -73,7 +73,7 @@ std::wstring Utf8ToWide(const std::string& text) {
 
 // Tray menu labels are ASCII hex so the binary stays correct even if /utf-8 is
 // dropped. Notifications, tooltip updates, and Explorer paths already call
-// Utf8ToWide. The window title is ASCII "ClipBridge". File dialogs are the
+// Utf8ToWide. The window title is ASCII "ClipDock". File dialogs are the
 // file_picker plugin, which takes Flutter UTF-8 strings.
 std::wstring MenuText(const char* utf8) { return Utf8ToWide(utf8); }
 
@@ -549,7 +549,7 @@ void AddTrayIcon() {
   g_nid.uCallbackMessage = kTrayCallback;
   g_nid.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(101));
   const std::wstring initialTip = MenuText(
-      "ClipBridge \xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB1\x80\xE5\x9F\x9F\xE7\xBD\x91\xE5\xBE\x85\xE5\x91\xBD");
+      "\xE5\x89\xAA\xE8\xB4\xB4\xE5\x9D\x9E\xE6\xAD\xA3\xE5\x9C\xA8\xE5\xB1\x80\xE5\x9F\x9F\xE7\xBD\x91\xE5\xBE\x85\xE5\x91\xBD");
   wcsncpy_s(g_nid.szTip, initialTip.c_str(), _TRUNCATE);
   g_tray_added = Shell_NotifyIconW(NIM_ADD, &g_nid) == TRUE;
 }
@@ -765,11 +765,13 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
             std::wstring command = L"\"";
             command += path;
             command += L"\"";
-            RegSetValueExW(key, L"ClipBridge", 0, REG_SZ,
+            RegSetValueExW(key, L"ClipDock", 0, REG_SZ,
                            reinterpret_cast<const BYTE*>(command.c_str()),
                            static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+            RegDeleteValueW(key, L"ClipBridge");
           }
         } else {
+          RegDeleteValueW(key, L"ClipDock");
           RegDeleteValueW(key, L"ClipBridge");
         }
         RegCloseKey(key);

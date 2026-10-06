@@ -29,7 +29,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // first tight layout measure the whole card instead of the edge pill.
   Win32Window::Point origin(40, 40);
   Win32Window::Size size(22, 88);
-  if (!window.Create(L"ClipBridge", origin, size)) {
+  if (!window.Create(L"ClipDock", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
