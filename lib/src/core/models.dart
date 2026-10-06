@@ -30,6 +30,9 @@ class AppSettings {
     required this.maxFileBytes,
     required this.confirmBeforeSend,
     required this.paused,
+    this.dockEdge = 'right',
+    this.dockFraction = 0.5,
+    this.launchAtStartup = false,
   });
 
   final String deviceName;
@@ -39,6 +42,9 @@ class AppSettings {
   final int maxFileBytes;
   final bool confirmBeforeSend;
   final bool paused;
+  final String dockEdge;
+  final double dockFraction;
+  final bool launchAtStartup;
 
   static const int defaultMaxFileBytes = 200 * 1024 * 1024;
 
@@ -51,6 +57,9 @@ class AppSettings {
       maxFileBytes: defaultMaxFileBytes,
       confirmBeforeSend: false,
       paused: false,
+      dockEdge: 'right',
+      dockFraction: 0.5,
+      launchAtStartup: false,
     );
   }
 
@@ -62,6 +71,9 @@ class AppSettings {
     int? maxFileBytes,
     bool? confirmBeforeSend,
     bool? paused,
+    String? dockEdge,
+    double? dockFraction,
+    bool? launchAtStartup,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -71,6 +83,9 @@ class AppSettings {
       maxFileBytes: maxFileBytes ?? this.maxFileBytes,
       confirmBeforeSend: confirmBeforeSend ?? this.confirmBeforeSend,
       paused: paused ?? this.paused,
+      dockEdge: dockEdge ?? this.dockEdge,
+      dockFraction: dockFraction ?? this.dockFraction,
+      launchAtStartup: launchAtStartup ?? this.launchAtStartup,
     );
   }
 
@@ -82,6 +97,9 @@ class AppSettings {
     'maxFileBytes': maxFileBytes,
     'confirmBeforeSend': confirmBeforeSend,
     'paused': paused,
+    'dockEdge': dockEdge == 'left' ? 'left' : 'right',
+    'dockFraction': dockFraction,
+    'launchAtStartup': launchAtStartup,
   };
 
   factory AppSettings.fromJson(Map<String, Object?> json, DeviceKind kind) {
@@ -104,6 +122,11 @@ class AppSettings {
       confirmBeforeSend:
           json['confirmBeforeSend'] as bool? ?? initial.confirmBeforeSend,
       paused: json['paused'] as bool? ?? false,
+      dockEdge: json['dockEdge'] == 'left' ? 'left' : 'right',
+      dockFraction: json['dockFraction'] is num
+          ? (json['dockFraction'] as num).toDouble().clamp(0.0, 1.0)
+          : 0.5,
+      launchAtStartup: json['launchAtStartup'] as bool? ?? false,
     );
   }
 

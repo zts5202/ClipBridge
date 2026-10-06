@@ -578,6 +578,7 @@ class BridgeController extends ChangeNotifier {
 
   Future<void> updateSettings(AppSettings next) async {
     final wasAuto = _settings.autoReconnect;
+    final wasLaunch = _settings.launchAtStartup;
     final maxBytes = next.maxFileBytes
         .clamp(1 * 1024 * 1024, 2048 * 1024 * 1024)
         .toInt();
@@ -588,6 +589,9 @@ class BridgeController extends ChangeNotifier {
           : next.deviceName.trim(),
     );
     _settings = normalized;
+    if (wasLaunch != normalized.launchAtStartup) {
+      unawaited(clipboard.setLaunchAtStartup(normalized.launchAtStartup));
+    }
     if (!wasAuto && normalized.autoReconnect) {
       _suppressAuto = false;
       _clearBackoff();
@@ -595,10 +599,7 @@ class BridgeController extends ChangeNotifier {
     _session.deviceName = normalized.deviceName;
     _discovery.updateSelf(name: normalized.deviceName);
     await _saveSettings();
-    await clipboard.trayUpdate(
-      tooltip: phaseLabel,
-      paused: normalized.paused,
-    );
+    await _syncTray(tooltip: phaseLabel);
     _touch(force: true);
     await _updatePresence();
   }
@@ -606,6 +607,36 @@ class BridgeController extends ChangeNotifier {
   Future<void> setPaused(bool value) async {
     await updateSettings(_settings.copyWith(paused: value));
     _toast(value ? '已暂停同步' : '已继续同步');
+  }
+
+  Future<void> copyText(String text) async {
+    await clipboard.setText(text);
+    _toast('已复制');
+  }
+
+  Future<void> sendDroppedFile(String path) {
+    final name = p.basename(path);
+    final image = looksLikeImage(Uint8List(0), guessMime(name, PayloadKind.file), name);
+    return _withSendLock(
+      () => _sendFile(
+        path,
+        kind: image ? PayloadKind.image : PayloadKind.file,
+        displayName: name,
+        interactive: true,
+      ),
+    );
+  }
+
+  @visibleForTesting
+  void debugPreview({
+    LinkPhase phase = LinkPhase.discovering,
+    String? peerName,
+    String? detail,
+  }) {
+    _phase = phase;
+    _peerName = peerName;
+    _detail = detail;
+    _touch(force: true);
   }
 
   Future<void> sendText(String text, {bool interactive = true}) {
@@ -1289,11 +1320,24 @@ class BridgeController extends ChangeNotifier {
   void _onTray(String action) {
     switch (action) {
       case 'show':
+      case 'pin':
         unawaited(clipboard.showWindow());
       case 'hide':
         unawaited(clipboard.hideWindow());
       case 'pause':
         unawaited(setPaused(!_settings.paused));
+      case 'autosync':
+        unawaited(
+          updateSettings(
+            _settings.copyWith(autoSyncClipboard: !_settings.autoSyncClipboard),
+          ),
+        );
+      case 'startup':
+        unawaited(
+          updateSettings(
+            _settings.copyWith(launchAtStartup: !_settings.launchAtStartup),
+          ),
+        );
       case 'quit':
         unawaited(_quitFromTray());
     }
@@ -1416,10 +1460,17 @@ class BridgeController extends ChangeNotifier {
     final text = _peerName == null
         ? 'ClipBridge 正在局域网待命'
         : '已连接 $_peerName';
-    await clipboard.updatePresence(_settings.paused ? '$text（已暂停）' : text);
-    await clipboard.trayUpdate(
-      tooltip: _settings.paused ? '$text（已暂停）' : text,
+    final label = _settings.paused ? '$text（已暂停）' : text;
+    await clipboard.updatePresence(label);
+    await _syncTray(tooltip: label);
+  }
+
+  Future<void> _syncTray({required String tooltip}) {
+    return clipboard.trayUpdate(
+      tooltip: tooltip,
       paused: _settings.paused,
+      autoSync: _settings.autoSyncClipboard,
+      launchAtStartup: _settings.launchAtStartup,
     );
   }
 

@@ -91,7 +91,7 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     WNDCLASS window_class{};
     window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
     window_class.lpszClassName = kWindowClassName;
-    window_class.style = CS_HREDRAW | CS_VREDRAW;
+    window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
@@ -134,11 +134,15 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
-  HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
-      nullptr, nullptr, GetModuleHandle(nullptr), this);
+  // Popup tool window: no taskbar button, topmost, and WS_EX_NOACTIVATE so
+  // showing the dock does not steal the foreground window from auto-paste.
+  // window_manager was not used because it activates on click by default.
+  HWND window = CreateWindowEx(
+      WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, window_class,
+      title.c_str(), WS_POPUP, Scale(origin.x, scale_factor),
+      Scale(origin.y, scale_factor), Scale(size.width, scale_factor),
+      Scale(size.height, scale_factor), nullptr, nullptr,
+      GetModuleHandle(nullptr), this);
 
   if (!window) {
     return false;
@@ -150,7 +154,7 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, SW_SHOWNOACTIVATE);
 }
 
 // static
@@ -187,16 +191,11 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
 
-    case WM_DPICHANGED: {
-      auto newRectSize = reinterpret_cast<RECT*>(lparam);
-      LONG newWidth = newRectSize->right - newRectSize->left;
-      LONG newHeight = newRectSize->bottom - newRectSize->top;
-
-      SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
-                   newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
-
+    case WM_DPICHANGED:
+      // Dart places the dock from monitor work areas. Accepting the suggested
+      // rect would resize this popup as if it were still the old main window.
       return 0;
-    }
+
     case WM_SIZE: {
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
@@ -208,9 +207,6 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
-      if (child_content_ != nullptr) {
-        SetFocus(child_content_);
-      }
       return 0;
 
     case WM_DWMCOLORIZATIONCOLORCHANGED:
@@ -245,8 +241,6 @@ void Win32Window::SetChildContent(HWND content) {
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
-
-  SetFocus(child_content_);
 }
 
 RECT Win32Window::GetClientArea() {
