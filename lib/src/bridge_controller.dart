@@ -14,6 +14,7 @@ import 'core/log.dart';
 import 'core/models.dart';
 import 'core/session_crypto.dart';
 import 'discovery/discovery_service.dart';
+import 'discovery/tether_probe.dart';
 import 'platform/clipboard_port.dart';
 import 'session/session_service.dart';
 
@@ -105,6 +106,12 @@ class BridgeController extends ChangeNotifier {
   ShareItem? _pendingShare;
   bool _suppressAuto = false;
   bool _disposed = false;
+  bool _outbound = false;
+  bool _probing = false;
+  bool _tetherDial = false;
+  String? _tetherDialPeerId;
+  int _tetherCursor = 0;
+  final Map<String, DateTime> _tetherQuietUntil = {};
   int _ignoreSeq = -1;
   int _seenSeq = -1;
   String? _echoText;
@@ -228,6 +235,7 @@ class BridgeController extends ChangeNotifier {
     _discovery.onChanged = (peers) {
       _discovered = peers;
       _touch(force: true);
+      unawaited(_tetherOutbound());
     };
     await _discovery.start(
       DiscoveryAnnouncement(
@@ -240,11 +248,12 @@ class BridgeController extends ChangeNotifier {
       ),
     );
     _phase = LinkPhase.discovering;
-    _localAddresses = await localIpv4Addresses();
-    _autoTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => unawaited(attemptAutoReconnect()),
-    );
+    await _refreshLocalAddresses();
+    _autoTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_refreshLocalAddresses());
+      unawaited(attemptAutoReconnect());
+      unawaited(_tetherOutbound());
+    });
     if (kind == DeviceKind.pc) {
       _clipTimer = Timer.periodic(
         const Duration(milliseconds: 500),
@@ -271,11 +280,10 @@ class BridgeController extends ChangeNotifier {
   }
 
   Future<void> attemptAutoReconnect() async {
-    if (_disposed || _suppressAuto || !_settings.autoReconnect) return;
-    if (_session.hasLiveLink || _phase == LinkPhase.connecting || _phase == LinkPhase.pairing) {
-      return;
-    }
+    if (_disposed || _suppressAuto || _outbound || !_settings.autoReconnect) return;
+    if (_linkBusy) return;
     for (final peer in _discovered) {
+      if (sharesUsbTetherSubnet(peer.host, _localAddresses)) continue;
       if (_trust(peer.id) != null) {
         await connectDiscovered(peer, manual: false);
         return;
@@ -283,7 +291,104 @@ class BridgeController extends ChangeNotifier {
     }
   }
 
-  void bumpDiscovery() => _discovery.announceNow();
+  bool get _linkBusy =>
+      _outbound ||
+      _session.hasLiveLink ||
+      _phase == LinkPhase.connecting ||
+      _phase == LinkPhase.pairing;
+
+  Future<void> _tetherOutbound() async {
+    if (_disposed || kind != DeviceKind.pc || _suppressAuto || _linkBusy) return;
+    final plan = planTetherDial(
+      kind: kind,
+      suppress: _suppressAuto,
+      busy: _linkBusy,
+      autoReconnect: _settings.autoReconnect,
+      localAddresses: _localAddresses,
+      discovered: _discovered,
+      isTrusted: (id) => _trust(id) != null,
+      isCoolingDown: (id) {
+        final until = _tetherQuietUntil[id];
+        return until != null && DateTime.now().isBefore(until);
+      },
+    );
+    final peer = plan.peer;
+    final intent = plan.intent;
+    if (peer != null && intent != null) {
+      await _dial(
+        host: peer.host,
+        port: peer.tcpPort,
+        intent: intent,
+        expectedId: peer.id,
+        tether: true,
+      );
+      return;
+    }
+    if (_discovered.any((peer) => sharesUsbTetherSubnet(peer.host, _localAddresses))) {
+      return;
+    }
+    await _probeNextTetherPort();
+  }
+
+  Future<void> _probeNextTetherPort() async {
+    if (_probing || _linkBusy || _disposed) return;
+    final targets = tetherTcpTargets(_localAddresses);
+    if (targets.isEmpty) return;
+    _probing = true;
+    final target = targets[_tetherCursor % targets.length];
+    _tetherCursor = (_tetherCursor + 1) % targets.length;
+    Socket? socket;
+    try {
+      socket = await Socket.connect(
+        target.host,
+        target.port,
+        timeout: const Duration(milliseconds: 800),
+      );
+      if (_disposed || _suppressAuto || _linkBusy) {
+        await socket.close();
+        return;
+      }
+      final adopted = socket;
+      socket = null;
+      await _dial(
+        host: target.host,
+        port: target.port,
+        intent: 'manual',
+        quiet: true,
+        tether: true,
+        socket: adopted,
+      );
+    } catch (_) {
+      await socket?.close();
+    } finally {
+      _probing = false;
+    }
+  }
+
+  void bumpDiscovery() {
+    _discovery.announceNow();
+    unawaited(_refreshLocalAddresses());
+  }
+
+  Future<void> _refreshLocalAddresses() async {
+    if (_disposed) return;
+    final next = await localIpv4Addresses();
+    if (_disposed) return;
+    _discovery.tetherLocals = next;
+    if (_sameAddresses(next, _localAddresses)) return;
+    _localAddresses = next;
+    _touch(force: true);
+  }
+
+  bool _sameAddresses(List<String> next, List<String> current) {
+    if (next.length != current.length) return false;
+    final sortedNext = [...next]..sort();
+    final sortedCurrent = [...current]..sort();
+    for (var i = 0; i < sortedNext.length; i++) {
+      if (sortedNext[i] != sortedCurrent[i]) return false;
+    }
+    return true;
+  }
 
   @visibleForTesting
   void setDirectAnnouncements(List<DirectTarget> targets) {
@@ -303,16 +408,46 @@ class BridgeController extends ChangeNotifier {
     bool manual = true,
   }) async {
     if (manual) _suppressAuto = false;
-    if (_session.hasLiveLink) await _session.disconnect();
+    await _dial(
+      host: peer.host,
+      port: peer.tcpPort,
+      intent: manual ? 'manual' : 'auto',
+      expectedId: peer.id,
+    );
+  }
+
+  Future<void> _dial({
+    required String host,
+    required int port,
+    required String intent,
+    String? expectedId,
+    bool quiet = false,
+    bool tether = false,
+    Socket? socket,
+  }) async {
+    if (_outbound) {
+      await socket?.close();
+      return;
+    }
+    _outbound = true;
+    if (tether) {
+      _tetherDial = true;
+      _tetherDialPeerId = expectedId;
+    }
     try {
+      if (_session.hasLiveLink) await _session.disconnect();
       await _session.dial(
-        peer.host,
-        peer.tcpPort,
-        intent: manual ? 'manual' : 'auto',
-        expectedId: peer.id,
+        host,
+        port,
+        intent: intent,
+        expectedId: expectedId,
+        quiet: quiet,
+        socket: socket,
       );
     } catch (error) {
-      _setError(explainError(error));
+      if (!quiet) _setError(explainError(error));
+    } finally {
+      _outbound = false;
     }
   }
 
@@ -323,16 +458,11 @@ class BridgeController extends ChangeNotifier {
       return;
     }
     _suppressAuto = false;
-    if (_session.hasLiveLink) await _session.disconnect();
-    try {
-      await _session.dial(
-        parsed.host,
-        parsed.port ?? 47822,
-        intent: 'manual',
-      );
-    } catch (error) {
-      _setError(explainError(error));
-    }
+    await _dial(
+      host: parsed.host,
+      port: parsed.port ?? 47822,
+      intent: 'manual',
+    );
   }
 
   Future<void> acceptPair() => _session.acceptPair();
@@ -559,6 +689,8 @@ class BridgeController extends ChangeNotifier {
         _detail = '请核对两端显示的验证码';
         _touch(force: true);
       case SessionReadyEvent():
+        _tetherDial = false;
+        _tetherDialPeerId = null;
         _phase = LinkPhase.ready;
         _pairPrompt = null;
         _peerId = event.peerId;
@@ -574,6 +706,15 @@ class BridgeController extends ChangeNotifier {
       case SessionChunkEvent():
         await _onChunk(event);
       case SessionClosedEvent():
+        if (_tetherDial && event.reason != 'local') {
+          final id = _tetherDialPeerId ?? _pairPrompt?.peerId;
+          if (id != null) {
+            final seconds = event.reason == 'rejected' || event.reason == 'timeout' ? 60 : 8;
+            _tetherQuietUntil[id] = DateTime.now().add(Duration(seconds: seconds));
+          }
+        }
+        _tetherDial = false;
+        _tetherDialPeerId = null;
         _failIncoming(explainError(BridgeException(event.reason)));
         _pairPrompt = null;
         _peerName = null;

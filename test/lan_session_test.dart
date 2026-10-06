@@ -146,6 +146,36 @@ void main() {
     await pc.pollClipboardOnce();
     await waitFor(() => clipA.text == '自动同步的一段话', why: '电脑剪贴板没有自动同步到手机');
   });
+
+  test('unicast discovery reply reaches the prober', () async {
+    final rootA = await Directory.systemTemp.createTemp('cb_reply_a_');
+    final rootB = await Directory.systemTemp.createTemp('cb_reply_b_');
+    final phone = await launch(
+      root: rootA,
+      kind: DeviceKind.phone,
+      clipboard: MemoryClipboard(),
+    );
+    final pc = await launch(
+      root: rootB,
+      kind: DeviceKind.pc,
+      clipboard: MemoryClipboard(),
+    );
+    addTearDown(() async {
+      await phone.shutdown();
+      await pc.shutdown();
+      await rootA.delete(recursive: true);
+      await rootB.delete(recursive: true);
+    });
+
+    pc.setDirectAnnouncements([
+      DirectTarget(InternetAddress.loopbackIPv4, phone.discoveryPort),
+    ]);
+    await waitFor(
+      () => pc.discovered.any((peer) => peer.id == phone.deviceId) &&
+          phone.discovered.any((peer) => peer.id == pc.deviceId),
+      why: '只从电脑发出单播时，手机的回复没有回到电脑',
+    );
+  });
 }
 
 bool _same(List<int> a, List<int> b) {

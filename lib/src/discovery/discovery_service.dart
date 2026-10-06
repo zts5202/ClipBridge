@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import '../core/log.dart';
 import '../core/models.dart';
+import 'tether_probe.dart';
 
 class DirectTarget {
   const DirectTarget(this.address, this.port);
@@ -49,6 +50,7 @@ class DiscoveryService {
 
   final int bindPort;
   final List<DirectTarget> directTargets = [];
+  List<String> tetherLocals = const [];
   RawDatagramSocket? _socket;
   Timer? _announceTimer;
   Timer? _expireTimer;
@@ -103,6 +105,11 @@ class DiscoveryService {
     unawaited(_sendSubnetBroadcasts(socket, packet));
     for (final target in directTargets) {
       _safeSend(socket, packet, target.address, target.port);
+    }
+    for (final host in tetherProbeHosts(tetherLocals)) {
+      final address = InternetAddress.tryParse(host);
+      if (address == null) continue;
+      _safeSend(socket, packet, address, port);
     }
   }
 
