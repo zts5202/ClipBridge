@@ -2,7 +2,7 @@
 
 在同一局域网里，把 Android 手机和 Windows 电脑的剪贴板、图片、文件接在一起。不需要账号，不经过公网。
 
-当前版本：`1.2.0+4`  
+当前版本：`1.2.1+5`  
 应用 ID：`app.clipbridge.clipbridge`  
 开发与 CI 使用的 Flutter：**3.47.6 stable**（Dart **3.13.5**）
 
@@ -79,7 +79,7 @@ flutter build appbundle --release
 - `build/app/outputs/flutter-apk/app-release.apk`
 - `build/app/outputs/bundle/release/app-release.aab`
 
-Release 的 APK 和 AAB 使用仓库里的 `android/clipbridge-release.jks`（别名 `clipbridge`，口令写在 `android/clipbridge-signing.properties`）。这是一把专供旁加载的固定证书，证书 SHA-256 以 `6628A3CA` 开头。v1.1.0 和 v1.1.1 的 CI 每次都生成新的 debug keystore，所以装过那些版本的手机必须先卸载再安装 v1.2.0；从这一版起可以覆盖升级。
+Release 的 APK 和 AAB 使用仓库里的 `android/clipbridge-release.jks`（别名 `clipbridge`，口令写在 `android/clipbridge-signing.properties`）。这是一把专供旁加载的固定证书，证书 SHA-256 以 `6628A3CA` 开头。v1.1.0 和 v1.1.1 的 CI 每次都生成新的 debug keystore，所以装过那些版本的手机必须先卸载再安装。v1.2.0 与本版使用同一把证书，可以直接覆盖升级。
 
 这把密钥和口令是公开的，只保证「每次安装包是同一签名」，不能当作私密的上架密钥。谁拿到仓库都能用它签名。若要上架，请换成自己的密钥，或在 GitHub Actions 里设置 `CLIPBRIDGE_KEYSTORE_BASE64`、`CLIPBRIDGE_STORE_PASSWORD`、`CLIPBRIDGE_KEY_ALIAS`、`CLIPBRIDGE_KEY_PASSWORD`，构建时会优先用这组 secret。本环境没有仓库 secret 的写权限，所以密钥提交在仓库里。
 

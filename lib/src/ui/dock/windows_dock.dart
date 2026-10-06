@@ -287,6 +287,7 @@ class _WindowsDockState extends State<WindowsDock> {
     final child = KeyedSubtree(key: _boxKey, child: body);
     if (!_live) {
       return Material(
+        animationDuration: Duration.zero,
         color: dockSurface(Theme.of(context).brightness),
         child: child,
       );
@@ -296,6 +297,7 @@ class _WindowsDockState extends State<WindowsDock> {
       onEnter: (_) => _onEnter(),
       onExit: (_) => _onExit(),
       child: Material(
+        animationDuration: Duration.zero,
         color: dockSurface(Theme.of(context).brightness),
         child: AnimatedSize(
           duration: const Duration(milliseconds: 240),
@@ -343,7 +345,11 @@ class _WindowsDockState extends State<WindowsDock> {
             if (_hint != null && _prompt == null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
-                child: Text(_hint!, key: const Key('dock-hint'), style: const TextStyle(fontSize: 12)),
+                child: Text(
+                  _hint!,
+                  key: const Key('dock-hint'),
+                  style: dockFace(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
+                ),
               ),
             if (settings)
               DockSettingsPage(
