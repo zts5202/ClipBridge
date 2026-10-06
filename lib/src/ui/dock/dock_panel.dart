@@ -33,7 +33,7 @@ class DockStrip extends StatelessWidget {
           decoration: BoxDecoration(
             color: dockSurface(Theme.of(context).brightness),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.55)),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -543,6 +543,14 @@ class _DockSettingsPageState extends State<DockSettingsPage> {
           value: settings.launchAtStartup,
           onChanged: (value) =>
               controller.updateSettings(settings.copyWith(launchAtStartup: value)),
+        ),
+        SwitchListTile(
+          key: const Key('notification-sound'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('提示音'),
+          value: settings.notificationSound,
+          onChanged: (value) =>
+              controller.updateSettings(settings.copyWith(notificationSound: value)),
         ),
         Align(
           alignment: Alignment.centerLeft,

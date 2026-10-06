@@ -1282,7 +1282,7 @@ class BridgeController extends ChangeNotifier {
       _ => '自动粘贴失败',
     };
     final message = '已写入剪贴板。自动粘贴未成功：$reason';
-    await clipboard.notify('ClipBridge', message);
+    await clipboard.notify('ClipBridge', message, sound: _settings.notificationSound);
     return message;
   }
 
@@ -1336,6 +1336,12 @@ class BridgeController extends ChangeNotifier {
         unawaited(
           updateSettings(
             _settings.copyWith(launchAtStartup: !_settings.launchAtStartup),
+          ),
+        );
+      case 'sound':
+        unawaited(
+          updateSettings(
+            _settings.copyWith(notificationSound: !_settings.notificationSound),
           ),
         );
       case 'quit':
@@ -1453,7 +1459,7 @@ class BridgeController extends ChangeNotifier {
   void _toast(String message) {
     if (_disposed) return;
     toasts.add(message);
-    unawaited(clipboard.notify('ClipBridge', message));
+    unawaited(clipboard.notify('ClipBridge', message, sound: _settings.notificationSound));
   }
 
   Future<void> _updatePresence() async {
@@ -1471,6 +1477,7 @@ class BridgeController extends ChangeNotifier {
       paused: _settings.paused,
       autoSync: _settings.autoSyncClipboard,
       launchAtStartup: _settings.launchAtStartup,
+      notificationSound: _settings.notificationSound,
     );
   }
 

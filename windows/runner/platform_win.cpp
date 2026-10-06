@@ -27,6 +27,7 @@ constexpr UINT kCmdPause = 2103;
 constexpr UINT kCmdQuit = 2104;
 constexpr UINT kCmdSync = 2105;
 constexpr UINT kCmdStartup = 2106;
+constexpr UINT kCmdSound = 2107;
 constexpr UINT_PTR kFullscreenTimer = 42;
 
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
@@ -34,6 +35,12 @@ constexpr UINT_PTR kFullscreenTimer = 42;
 #endif
 #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
 #define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWA_USE_HOSTBACKDROPBRUSH
+#define DWMWA_USE_HOSTBACKDROPBRUSH 17
+#endif
+#ifndef NIIF_NOSOUND
+#define NIIF_NOSOUND 0x00000010
 #endif
 
 HWND g_hwnd = nullptr;
@@ -44,12 +51,15 @@ bool g_allow_activate = false;
 bool g_user_visible = true;
 bool g_hidden_for_fullscreen = false;
 bool g_pointer_near = false;
+bool g_notification_sound = false;
 bool g_force_quit = false;
 std::string g_monitor_fp;
 bool g_tray_added = false;
 NOTIFYICONDATAW g_nid{};
 std::function<void()> g_quit;
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_channel;
+
+void ApplyDockGlass(HWND hwnd);
 
 std::wstring Utf8ToWide(const std::string& text) {
   if (text.empty()) return L"";
@@ -120,11 +130,26 @@ int MapInt(const flutter::EncodableMap& map, const char* key, int fallback) {
   return fallback;
 }
 
+bool IsShellWindow(HWND hwnd) {
+  if (!hwnd) return false;
+  if (hwnd == GetShellWindow()) return true;
+  wchar_t cls[64];
+  const int length = GetClassNameW(hwnd, cls, 64);
+  if (length <= 0) return false;
+  return wcscmp(cls, L"Progman") == 0 || wcscmp(cls, L"WorkerW") == 0 ||
+         wcscmp(cls, L"Shell_TrayWnd") == 0 ||
+         wcscmp(cls, L"Shell_SecondaryTrayWnd") == 0;
+}
+
 bool ForegroundCoversMonitor() {
   HWND foreground = GetForegroundWindow();
   if (!foreground || foreground == g_hwnd || !IsWindowVisible(foreground)) {
     return false;
   }
+  // The desktop (Progman / WorkerW) covers the monitor whenever the user is
+  // looking at the wallpaper. Treating that as fullscreen hid the strip, so
+  // the only way to see ClipBridge was the tray.
+  if (IsShellWindow(foreground)) return false;
   RECT window_rect;
   if (!GetWindowRect(foreground, &window_rect)) return false;
   if (window_rect.right - window_rect.left < 200 ||
@@ -207,7 +232,8 @@ void PollFullscreenAndMonitors() {
     g_pointer_near = cursor_near;
     if (g_channel) {
       g_channel->InvokeMethod(
-          "onPointerNear", std::make_unique<flutter::EncodableValue>(near));
+          "onPointerNear",
+          std::make_unique<flutter::EncodableValue>(cursor_near));
     }
   }
 }
@@ -541,11 +567,16 @@ void ShowTrayMenu() {
   const std::wstring startup = MenuText(
       g_launch ? "\xE5\x85\xB3\xE9\x97\xAD\xE5\xBC\x80\xE6\x9C\xBA\xE8\x87\xAA\xE5\x90\xAF"
                : "\xE5\xBC\x80\xE5\x90\xAF\xE5\xBC\x80\xE6\x9C\xBA\xE8\x87\xAA\xE5\x90\xAF");
+  const std::wstring sound = MenuText(
+      g_notification_sound
+          ? "\xE5\x85\xB3\xE9\x97\xAD\xE6\x8F\x90\xE7\xA4\xBA\xE9\x9F\xB3"
+          : "\xE5\xBC\x80\xE5\x90\xAF\xE6\x8F\x90\xE7\xA4\xBA\xE9\x9F\xB3");
   const std::wstring quit = MenuText("\xE9\x80\x80\xE5\x87\xBA");
   AppendMenuW(menu, MF_STRING, kCmdShow, show.c_str());
   AppendMenuW(menu, MF_STRING, kCmdPause, pause.c_str());
   AppendMenuW(menu, MF_STRING, kCmdSync, sync.c_str());
   AppendMenuW(menu, MF_STRING, kCmdStartup, startup.c_str());
+  AppendMenuW(menu, MF_STRING, kCmdSound, sound.c_str());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kCmdQuit, quit.c_str());
   POINT point;
@@ -616,7 +647,15 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
         g_nid.uFlags = NIF_INFO;
         wcsncpy_s(g_nid.szInfoTitle, title.c_str(), _TRUNCATE);
         wcsncpy_s(g_nid.szInfo, body.c_str(), _TRUNCATE);
-        g_nid.dwInfoFlags = NIIF_INFO;
+        bool play_sound = g_notification_sound;
+        const auto sound_it = args->find(flutter::EncodableValue(std::string("sound")));
+        if (sound_it != args->end()) {
+          if (const auto* value = std::get_if<bool>(&sound_it->second)) {
+            play_sound = *value;
+          }
+        }
+        g_notification_sound = play_sound;
+        g_nid.dwInfoFlags = play_sound ? NIIF_INFO : (NIIF_INFO | NIIF_NOSOUND);
         Shell_NotifyIconW(NIM_MODIFY, &g_nid);
         g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
       }
@@ -638,6 +677,13 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
         g_paused = MapBool(*args, "paused");
         g_auto_sync = MapBool(*args, "autoSync");
         g_launch = MapBool(*args, "launchAtStartup");
+        const auto sound_it =
+            args->find(flutter::EncodableValue(std::string("notificationSound")));
+        if (sound_it != args->end()) {
+          if (const auto* value = std::get_if<bool>(&sound_it->second)) {
+            g_notification_sound = *value;
+          }
+        }
         const std::wstring tip = Utf8ToWide(MapString(*args, "tooltip"));
         if (g_tray_added && !tip.empty()) {
           g_nid.uFlags = NIF_TIP;
@@ -655,7 +701,6 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
         const int y = MapInt(*args, "y", 0);
         const int width = MapInt(*args, "w", 32);
         const int height = MapInt(*args, "h", 88);
-        const int radius = MapInt(*args, "radius", 16);
         bool show = true;
         const auto show_it = args->find(flutter::EncodableValue(std::string("show")));
         if (show_it != args->end()) {
@@ -665,9 +710,9 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
           g_user_visible = show;
           SetWindowPos(g_hwnd, HWND_TOPMOST, x, y, width, height,
                        SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
-          const int diameter = radius * 2;
-          HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
-          SetWindowRgn(g_hwnd, region, TRUE);
+          // A window region clips DWM acrylic/mica, so the rounded shape is
+          // Flutter's ClipRRect (transparent corners) instead of SetWindowRgn.
+          if (show) ApplyDockGlass(g_hwnd);
         }
       }
       result->Success();
@@ -766,6 +811,70 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
   }
 }
 
+bool IsAtLeastWindows11() {
+  using RtlGetVersionPtr = LONG(WINAPI*)(OSVERSIONINFOW*);
+  const auto rtl = reinterpret_cast<RtlGetVersionPtr>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+  if (rtl == nullptr) return false;
+  OSVERSIONINFOW info{};
+  info.dwOSVersionInfoSize = sizeof(info);
+  if (rtl(&info) != 0) return false;
+  return info.dwMajorVersion > 10 ||
+         (info.dwMajorVersion == 10 && info.dwBuildNumber >= 22000);
+}
+
+struct AccentPolicy {
+  int state;
+  int flags;
+  int gradient;
+  int animation;
+};
+
+struct CompositionAttribute {
+  int attrib;
+  void* data;
+  size_t size;
+};
+
+using SetCompositionFn = BOOL(WINAPI*)(HWND, CompositionAttribute*);
+
+// Flutter's ANGLE surface already has an 8-bit alpha channel. Extending the
+// DWM frame lets those pixels composite over a system backdrop, so the plate
+// can be translucent while text drawn on top of it stays opaque.
+// WS_EX_LAYERED is intentionally not used: a constant alpha fades the text
+// with the plate, and per-pixel layered updates have gone black or
+// click-through with this swapchain.
+void ApplyDockGlass(HWND hwnd) {
+  if (!hwnd) return;
+  MARGINS margins{-1, -1, -1, -1};
+  DwmExtendFrameIntoClientArea(hwnd, &margins);
+  BOOL host_brush = TRUE;
+  DwmSetWindowAttribute(hwnd, DWMWA_USE_HOSTBACKDROPBRUSH, &host_brush, sizeof(host_brush));
+  int backdrop = 3;  // DWMSBT_TRANSIENTWINDOW: acrylic, the right look for a small panel.
+  const HRESULT backdrop_hr =
+      DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+  int corner = 2;  // DWMWCP_ROUND
+  DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+  if (IsAtLeastWindows11() && SUCCEEDED(backdrop_hr)) return;
+
+  const auto set_composition = reinterpret_cast<SetCompositionFn>(
+      GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute"));
+  if (set_composition == nullptr) return;
+  AccentPolicy policy{};
+  policy.state = 4;  // ACCENT_ENABLE_ACRYLICBLURBEHIND (Windows 10 1803+)
+  policy.flags = 2;
+  policy.gradient = 0xCCFAF7F7;  // ABGR tint over the blur
+  CompositionAttribute attribute{};
+  attribute.attrib = 19;  // WCA_ACCENT_POLICY
+  attribute.data = &policy;
+  attribute.size = sizeof(policy);
+  if (set_composition(hwnd, &attribute) == FALSE) {
+    policy.state = 3;  // ACCENT_ENABLE_BLURBEHIND
+    policy.gradient = 0;
+    set_composition(hwnd, &attribute);
+  }
+}
+
 }  // namespace
 
 void InstallClipBridgeChannel(flutter::BinaryMessenger* messenger,
@@ -782,10 +891,7 @@ void InstallClipBridgeChannel(flutter::BinaryMessenger* messenger,
         HandleMethod(call, std::move(result));
       });
   AddTrayIcon();
-  int backdrop = 3;
-  DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
-  int corner = 2;
-  DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+  ApplyDockGlass(hwnd);
   DragAcceptFiles(hwnd, TRUE);
   // 100ms is enough to notice a cursor within ~8px and a fullscreen cover,
   // without a Dart animation ticker. Each tick is a few Win32 queries.
@@ -840,6 +946,10 @@ bool HandleClipBridgeMessage(HWND hwnd,
           InvokeTray("startup");
           *result = 0;
           return true;
+        case kCmdSound:
+          InvokeTray("sound");
+          *result = 0;
+          return true;
         case kCmdQuit:
           InvokeTray("quit");
           *result = 0;
@@ -854,6 +964,10 @@ bool HandleClipBridgeMessage(HWND hwnd,
       *result = 0;
       return true;
     }
+    case WM_ERASEBKGND:
+      // Let DWM show the acrylic backdrop instead of a solid GDI fill.
+      *result = 1;
+      return true;
     case WM_MOUSEACTIVATE:
       *result = g_allow_activate ? MA_ACTIVATE : MA_NOACTIVATE;
       return true;

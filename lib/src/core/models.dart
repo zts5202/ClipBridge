@@ -33,6 +33,7 @@ class AppSettings {
     this.dockEdge = 'right',
     this.dockFraction = 0.5,
     this.launchAtStartup = false,
+    this.notificationSound = false,
   });
 
   final String deviceName;
@@ -45,6 +46,9 @@ class AppSettings {
   final String dockEdge;
   final double dockFraction;
   final bool launchAtStartup;
+
+  /// Windows balloon / Android alert sound. Off unless the user opts in.
+  final bool notificationSound;
 
   static const int defaultMaxFileBytes = 200 * 1024 * 1024;
 
@@ -74,6 +78,7 @@ class AppSettings {
     String? dockEdge,
     double? dockFraction,
     bool? launchAtStartup,
+    bool? notificationSound,
   }) {
     return AppSettings(
       deviceName: deviceName ?? this.deviceName,
@@ -86,6 +91,7 @@ class AppSettings {
       dockEdge: dockEdge ?? this.dockEdge,
       dockFraction: dockFraction ?? this.dockFraction,
       launchAtStartup: launchAtStartup ?? this.launchAtStartup,
+      notificationSound: notificationSound ?? this.notificationSound,
     );
   }
 
@@ -100,6 +106,7 @@ class AppSettings {
     'dockEdge': dockEdge == 'left' ? 'left' : 'right',
     'dockFraction': dockFraction,
     'launchAtStartup': launchAtStartup,
+    'notificationSound': notificationSound,
   };
 
   factory AppSettings.fromJson(Map<String, Object?> json, DeviceKind kind) {
@@ -127,6 +134,7 @@ class AppSettings {
           ? (json['dockFraction'] as num).toDouble().clamp(0.0, 1.0)
           : 0.5,
       launchAtStartup: json['launchAtStartup'] as bool? ?? false,
+      notificationSound: json['notificationSound'] as bool? ?? false,
     );
   }
 

@@ -45,6 +45,8 @@ class _WindowsDockState extends State<WindowsDock> {
   StreamSubscription<void>? _monitorsSub;
   StreamSubscription<bool>? _nearSub;
   List<MonitorWorkArea> _monitors = const [MonitorWorkArea.fallback];
+  bool _monitorsReady = false;
+  bool _nativeNear = false;
   DockFrame? _applied;
 
   bool get _live => widget.preview == DockPreview.live;
@@ -76,6 +78,7 @@ class _WindowsDockState extends State<WindowsDock> {
     }
     if (_live) {
       _nearSub = widget.controller.clipboard.pointerNear.listen((near) {
+        _nativeNear = near;
         if (near) {
           _onEnter();
         } else {
@@ -92,7 +95,10 @@ class _WindowsDockState extends State<WindowsDock> {
   Future<void> _loadMonitors() async {
     final monitors = await DockWindow.monitors();
     if (!mounted) return;
-    setState(() => _monitors = monitors);
+    setState(() {
+      _monitors = monitors;
+      _monitorsReady = true;
+    });
     _scheduleFrame();
   }
 
@@ -156,7 +162,7 @@ class _WindowsDockState extends State<WindowsDock> {
   }
 
   Future<void> _pushFrame() async {
-    if (!mounted || !_live) return;
+    if (!mounted || !_live || !_monitorsReady) return;
     final box = _boxKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
     final settings = widget.controller.settings;
@@ -206,6 +212,10 @@ class _WindowsDockState extends State<WindowsDock> {
 
   void _onExit() {
     _expandTimer?.cancel();
+    // The native poll stays true while the cursor is inside the 8px pad, even
+    // after MouseRegion has already reported a leave. Collapsing here would
+    // hide the panel while the pointer is still beside it.
+    if (_nativeNear) return;
     if (_pinned || _prompt != null || _confirm != null) return;
     _collapseTimer?.cancel();
     _collapseTimer = Timer(const Duration(milliseconds: 600), () {
@@ -284,28 +294,48 @@ class _WindowsDockState extends State<WindowsDock> {
             onTap: _togglePin,
             onDragUpdate: _live ? _onDrag : null,
           );
-    final child = KeyedSubtree(key: _boxKey, child: body);
+    final measured = NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        _scheduleFrame();
+        return true;
+      },
+      child: SizeChangedLayoutNotifier(child: KeyedSubtree(key: _boxKey, child: body)),
+    );
+    final glass = dockSurface(Theme.of(context).brightness);
     if (!_live) {
       return Material(
         animationDuration: Duration.zero,
-        color: dockSurface(Theme.of(context).brightness),
-        child: child,
+        color: glass,
+        child: measured,
       );
     }
     _scheduleFrame();
+    final dockRight = controller.settings.dockEdge != 'left';
+    final edge = dockRight ? Alignment.centerRight : Alignment.centerLeft;
+    // The view's constraints are tight to the current HWND. AnimatedSize
+    // refuses to shrink-wrap a tight parent, which locked the collapsed strip
+    // to the initial 360×680 window. UnconstrainedBox lets the strip and the
+    // panel keep their own size; setFrame then hugs that size to the edge.
     return MouseRegion(
       onEnter: (_) => _onEnter(),
       onExit: (_) => _onExit(),
-      child: Material(
-        animationDuration: Duration.zero,
-        color: dockSurface(Theme.of(context).brightness),
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOutBack,
-          alignment: controller.settings.dockEdge == 'left'
-              ? Alignment.centerLeft
-              : Alignment.centerRight,
-          child: child,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_expanded ? 16 : 12),
+        child: Material(
+          animationDuration: Duration.zero,
+          color: glass,
+          child: UnconstrainedBox(
+            clipBehavior: Clip.none,
+            alignment: edge,
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutBack,
+              alignment: edge,
+              clipBehavior: Clip.none,
+              onEnd: _scheduleFrame,
+              child: measured,
+            ),
+          ),
         ),
       ),
     );
@@ -313,8 +343,8 @@ class _WindowsDockState extends State<WindowsDock> {
 
   Widget _panel(bool settings) {
     final controller = widget.controller;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 320),
+    return SizedBox(
+      width: 320,
       child: ListView(
         shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
