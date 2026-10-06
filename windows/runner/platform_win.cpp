@@ -201,9 +201,10 @@ void PollFullscreenAndMonitors() {
                               std::make_unique<flutter::EncodableValue>());
     }
   }
-  const bool near = PointerNearDock();
-  if (near != g_pointer_near) {
-    g_pointer_near = near;
+  // "near" is a Windows macro, so the local name cannot be that word.
+  const bool cursor_near = PointerNearDock();
+  if (cursor_near != g_pointer_near) {
+    g_pointer_near = cursor_near;
     if (g_channel) {
       g_channel->InvokeMethod(
           "onPointerNear", std::make_unique<flutter::EncodableValue>(near));
