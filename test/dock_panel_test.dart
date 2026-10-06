@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:clipbridge/src/bridge_controller.dart';
@@ -12,7 +13,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _previewFontFamily = 'ClipPreview';
 bool _previewFontReady = false;
 
 Future<void> _loadFont(String family, String path) async {
@@ -25,15 +25,14 @@ Future<void> _loadFont(String family, String path) async {
 
 Future<void> ensurePreviewFont() async {
   if (_previewFontReady) return;
-  const candidates = [
-    '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-  ];
-  for (final path in candidates) {
-    if (!File(path).existsSync()) continue;
-    await _loadFont(_previewFontFamily, path);
+  // Noto Sans SC covers Latin and CJK. It is loaded under the same family the
+  // dock asks for, and it is not listed in pubspec assets, so it stays out of
+  // the installer. Droid Sans Fallback was CJK-only, which turned "14" and
+  // "ClipBridge" into boxes, and buttons never inherited that family.
+  const noto = 'test/fonts/NotoSansSC-Regular.otf';
+  if (File(noto).existsSync()) {
+    await _loadFont(dockFontFamily, noto);
     _previewFontReady = true;
-    break;
   }
   final flutterRoot = Platform.environment['FLUTTER_ROOT'];
   final iconCandidates = [
@@ -100,13 +99,7 @@ Future<void> pumpDock(
   if ((Platform.environment['CLIPBRIDGE_PREVIEW_DIR'] ?? '').isNotEmpty) {
     await tester.runAsync(ensurePreviewFont);
   }
-  var theme = buildDockTheme(brightness);
-  if (_previewFontReady) {
-    theme = theme.copyWith(
-      textTheme: theme.textTheme.apply(fontFamily: _previewFontFamily),
-      primaryTextTheme: theme.primaryTextTheme.apply(fontFamily: _previewFontFamily),
-    );
-  }
+  final theme = buildDockTheme(brightness);
   await tester.pumpWidget(
     MaterialApp(
       theme: theme,
@@ -123,6 +116,9 @@ Future<void> pumpDock(
     ),
   );
   await tester.pump();
+  // ListTile animates its label color for 200ms. Capture and assertions need
+  // the settled color, not the previous theme's near-black text.
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 Future<void> savePreview(WidgetTester tester, String name) async {
@@ -255,4 +251,79 @@ void main() {
     await pumpDock(tester, controller, preview: DockPreview.settings, brightness: Brightness.dark);
     await savePreview(tester, 'settings_dark');
   });
+
+  testWidgets('深色主题下关键文字足够亮，并带中文回退字体', (tester) async {
+    final loaded = await tester.runAsync(
+      () => loadController(
+        peers: [
+          TrustedPeer(
+            id: 'peer-1',
+            name: '小米 14',
+            kind: DeviceKind.phone,
+            publicKeyB64: 'abc',
+            fingerprint: '00112233445566778899aabb',
+            lastSeenMs: 0,
+          ),
+        ],
+      ),
+    );
+    addTearDown(() async {
+      await loaded!.controller.shutdown();
+      if (loaded.root.existsSync()) await loaded.root.delete(recursive: true);
+    });
+    final controller = loaded!.controller;
+    controller.debugPreview(phase: LinkPhase.ready, peerName: '小米 14');
+    await pumpDock(tester, controller, brightness: Brightness.dark);
+    expectBright(tester, '已连接 · 小米 14');
+    expectBright(tester, '还没有传输记录');
+    expectBright(tester, '断开');
+    expectBright(tester, '发送当前剪贴板');
+    expectBright(tester, '仅剪贴板');
+    await pumpDock(tester, controller, brightness: Brightness.light);
+    await pumpDock(tester, controller, brightness: Brightness.dark);
+    expectBright(tester, '已连接 · 小米 14');
+    expectBright(tester, '断开');
+    expectBright(tester, '发送文件');
+    await pumpDock(tester, controller, preview: DockPreview.settings, brightness: Brightness.dark);
+    expectBright(tester, '小米 14');
+    expectBright(tester, '自动重连');
+    expectBright(tester, '保存名称');
+    expectBright(tester, '单次大小上限（MB）');
+    expectBright(tester, '尚未获得局域网地址');
+  });
+}
+
+double _channel(double value) {
+  return value <= 0.04045 ? value / 12.92 : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
+}
+
+double _luminance(Color color) {
+  return 0.2126 * _channel(color.r) + 0.7152 * _channel(color.g) + 0.0722 * _channel(color.b);
+}
+
+void expectBright(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  expect(finder, findsWidgets);
+  final render = finder.evaluate().first.renderObject;
+  final TextStyle? style;
+  final Color? color;
+  if (render is RenderParagraph) {
+    final span = render.text;
+    style = span is TextSpan ? span.style : null;
+    color = style?.color;
+  } else {
+    final editable = tester.widget<EditableText>(finder);
+    style = editable.style;
+    color = editable.style.color;
+  }
+  expect(color, isNotNull, reason: '$text 没有颜色');
+  final luminance = _luminance(color!);
+  expect(
+    luminance,
+    greaterThan(0.2),
+    reason: '$text 在深色底上太暗 luminance=$luminance color=$color',
+  );
+  expect(style?.fontFamily, dockFontFamily, reason: text);
+  expect(style?.fontFamilyFallback, contains('Microsoft YaHei UI'), reason: text);
+  expect(style?.fontFamilyFallback, contains('Microsoft YaHei'), reason: text);
 }

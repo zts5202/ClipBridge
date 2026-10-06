@@ -53,7 +53,11 @@ class DockStrip extends StatelessWidget {
                     key: const Key('dock-hint'),
                     maxLines: 4,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 9, height: 1.15),
+                    style: dockFace(
+                      fontSize: 9,
+                      height: 1.15,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
               ],
@@ -112,7 +116,11 @@ class DockHome extends StatelessWidget {
                   key: const Key('dock-status'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  style: dockFace(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface,
+                  ),
                 ),
               ),
               IconButton(
@@ -148,15 +156,15 @@ class DockHome extends StatelessWidget {
             ),
           ),
         if (unpaired)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
             child: Text(
               '在手机上打开 ClipBridge，确认配对',
-              key: Key('unpaired-guide'),
-              style: TextStyle(fontSize: 13, height: 1.35),
+              key: const Key('unpaired-guide'),
+              style: dockFace(fontSize: 13, height: 1.35, color: scheme.onSurface),
             ),
           ),
-        Text('接收方式', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+        Text('接收方式', style: dockFace(fontSize: 12, color: scheme.onSurfaceVariant)),
         const SizedBox(height: 6),
         _PillChoice<ReceiveMode>(
           selected: controller.settings.receiveMode,
@@ -219,7 +227,7 @@ class DockHome extends StatelessWidget {
         const SizedBox(height: 8),
         Row(
           children: [
-            Text('最近', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+            Text('最近', style: dockFace(fontSize: 12, color: scheme.onSurfaceVariant)),
             const Spacer(),
             if (controller.transfers.isNotEmpty)
               TextButton(
@@ -229,12 +237,12 @@ class DockHome extends StatelessWidget {
           ],
         ),
         if (recent.isEmpty)
-          const Text('还没有传输记录', style: TextStyle(fontSize: 13))
+          Text('还没有传输记录', style: dockFace(fontSize: 13, color: scheme.onSurface))
         else
           ...recent.map((record) => _RecordRow(controller: controller, record: record)),
         if (controller.discovered.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text('附近设备', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          Text('附近设备', style: dockFace(fontSize: 12, color: scheme.onSurfaceVariant)),
           ...controller.discovered.map((peer) {
             final trusted = controller.trusted.any((item) => item.id == peer.id);
             return ListTile(
@@ -322,7 +330,12 @@ class _RecordRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(record.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    record.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: dockFace(color: Theme.of(context).colorScheme.onSurface),
+                  ),
                   Text(
                     '$direction · $kind · ${formatTime(record.createdAt)}',
                     style: Theme.of(context).textTheme.bodySmall,
@@ -390,8 +403,15 @@ class _DockSettingsPageState extends State<DockSettingsPage> {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Text('设置', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            Expanded(
+              child: Text(
+                '设置',
+                style: dockFace(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
             ),
             IconButton(
               tooltip: '返回',
@@ -576,7 +596,7 @@ class _PillChoice<T> extends StatelessWidget {
                         child: Text(
                           option.label,
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: dockFace(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: option.value == selected
@@ -630,7 +650,12 @@ class PairCard extends StatelessWidget {
             Text('指纹 ${formatFingerprint(prompt.fingerprint)}'),
             Text(
               prompt.sas,
-              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 4),
+              style: dockFace(
+                fontSize: 28,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 4,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
             Text('请与另一台设备核对。$secondsLeft 秒后自动拒绝。'),
             Row(
