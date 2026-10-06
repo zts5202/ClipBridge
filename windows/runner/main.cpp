@@ -25,8 +25,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
+  // Hidden until Dart sends the hugged strip frame. A 360×680 start made the
+  // first tight layout measure the whole card instead of the edge pill.
   Win32Window::Point origin(40, 40);
-  Win32Window::Size size(360, 680);
+  Win32Window::Size size(22, 88);
   if (!window.Create(L"ClipBridge", origin, size)) {
     return EXIT_FAILURE;
   }

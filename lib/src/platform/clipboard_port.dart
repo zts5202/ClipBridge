@@ -12,7 +12,7 @@ abstract class ClipboardPort {
   Future<void> setImagePng(Uint8List png);
   Future<int> getSequence();
   Future<PasteResult> tryPaste();
-  Future<void> notify(String title, String body);
+  Future<void> notify(String title, String body, {bool sound = false});
   Future<String?> publishFile({
     required String path,
     required String name,
@@ -34,6 +34,7 @@ abstract class ClipboardPort {
     required bool paused,
     bool autoSync = false,
     bool launchAtStartup = false,
+    bool notificationSound = false,
   });
   Future<void> setLaunchAtStartup(bool enabled);
   Future<void> showWindow();
@@ -53,6 +54,7 @@ class MemoryClipboard implements ClipboardPort {
   final _drops = StreamController<String>.broadcast();
   final _monitors = StreamController<void>.broadcast();
   final _near = StreamController<bool>.broadcast();
+  bool syncedNotificationSound = false;
 
   @override
   Future<String?> getText() async => text;
@@ -79,9 +81,11 @@ class MemoryClipboard implements ClipboardPort {
   Future<PasteResult> tryPaste() async => pasteResult;
 
   @override
-  Future<void> notify(String title, String body) async {
+  Future<void> notify(String title, String body, {bool sound = false}) async {
     notifications.add('$title $body');
   }
+
+  void emitNear(bool near) => _near.add(near);
 
   @override
   Future<String?> publishFile({
@@ -130,7 +134,10 @@ class MemoryClipboard implements ClipboardPort {
     required bool paused,
     bool autoSync = false,
     bool launchAtStartup = false,
-  }) async {}
+    bool notificationSound = false,
+  }) async {
+    syncedNotificationSound = notificationSound;
+  }
 
   @override
   Future<void> setLaunchAtStartup(bool enabled) async {}
@@ -222,8 +229,8 @@ class PlatformClipboard implements ClipboardPort {
   }
 
   @override
-  Future<void> notify(String title, String body) async {
-    await _invoke<void>('notify', {'title': title, 'body': body});
+  Future<void> notify(String title, String body, {bool sound = false}) async {
+    await _invoke<void>('notify', {'title': title, 'body': body, 'sound': sound});
   }
 
   @override
@@ -300,12 +307,14 @@ class PlatformClipboard implements ClipboardPort {
     required bool paused,
     bool autoSync = false,
     bool launchAtStartup = false,
+    bool notificationSound = false,
   }) async {
     await _invoke<void>('trayUpdate', {
       'tooltip': tooltip,
       'paused': paused,
       'autoSync': autoSync,
       'launchAtStartup': launchAtStartup,
+      'notificationSound': notificationSound,
     });
   }
 

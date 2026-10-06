@@ -71,7 +71,7 @@ ThemeData buildDockTheme(Brightness brightness) {
     colorScheme: scheme,
     fontFamily: dockFontFamily,
     fontFamilyFallback: dockFontFallback,
-    scaffoldBackgroundColor: dark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
+    scaffoldBackgroundColor: surface,
     splashFactory: InkSparkle.splashFactory,
     textTheme: base.copyWith(
       bodySmall: face.copyWith(fontSize: 12, color: secondary),
@@ -134,8 +134,11 @@ ThemeData buildDockTheme(Brightness brightness) {
   );
 }
 
+/// Opacity of the plate drawn over the DWM acrylic/mica backdrop.
+/// Text is painted opaquely on top of this plate, so contrast stays.
+const dockGlassOpacity = 0.82;
+
 Color dockSurface(Brightness brightness) {
-  // Opaque frosted fill. Flutter's swapchain does not composite per-pixel
-  // alpha on a non-layered window, so a translucent color would paint over black.
-  return brightness == Brightness.dark ? const Color(0xFF1C1C1E) : const Color(0xFFF7F7FA);
+  final tint = brightness == Brightness.dark ? const Color(0xFF1C1C1E) : const Color(0xFFF7F7FA);
+  return tint.withValues(alpha: dockGlassOpacity);
 }

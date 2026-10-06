@@ -78,7 +78,8 @@ class MainActivity : FlutterActivity() {
                 "notify" -> {
                     val title = call.argument<String>("title") ?: "ClipBridge"
                     val body = call.argument<String>("body") ?: ""
-                    showAlert(title, body)
+                    val sound = call.argument<Boolean>("sound") ?: false
+                    showAlert(title, body, sound)
                     result.success(null)
                 }
                 "publishFile" -> {
@@ -159,7 +160,7 @@ class MainActivity : FlutterActivity() {
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 47821)
     }
 
-    private fun showAlert(title: String, body: String) {
+    private fun showAlert(title: String, body: String, sound: Boolean) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
         if (Build.VERSION.SDK_INT >= 26) {
             val channel = NotificationChannel(
@@ -174,6 +175,7 @@ class MainActivity : FlutterActivity() {
             .setContentText(body)
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setAutoCancel(true)
+            .setSilent(!sound)
             .build()
         manager.notify((System.currentTimeMillis() % 100000).toInt(), notification)
     }

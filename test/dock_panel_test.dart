@@ -237,6 +237,8 @@ void main() {
     expect(find.byKey(const Key('dock-settings')), findsOneWidget);
     expect(find.text('忘记'), findsOneWidget);
     expect(find.text('开机自启'), findsOneWidget);
+    expect(find.text('提示音'), findsOneWidget);
+    expect(controller.settings.notificationSound, isFalse);
     expect(find.text('自动重连'), findsOneWidget);
     expect(find.byKey(const Key('file-limit')), findsOneWidget);
     expect(find.text('左侧'), findsOneWidget);
@@ -290,6 +292,68 @@ void main() {
     expectBright(tester, '保存名称');
     expectBright(tester, '单次大小上限（MB）');
     expectBright(tester, '尚未获得局域网地址');
+    expectBright(tester, '提示音');
+  });
+
+  testWidgets('靠近滑出，离开收回，钉住除外，且不断开会话', (tester) async {
+    final loaded = await tester.runAsync(loadController);
+    addTearDown(() async {
+      await loaded!.controller.shutdown();
+      if (loaded.root.existsSync()) await loaded.root.delete(recursive: true);
+    });
+    final controller = loaded!.controller;
+    final clip = controller.clipboard as MemoryClipboard;
+    final phase = controller.phase;
+    await pumpDock(tester, controller, preview: DockPreview.live);
+    expect(find.byKey(const Key('dock-dot')), findsOneWidget);
+    expect(find.byKey(const Key('dock-status')), findsNothing);
+
+    clip.emitNear(true);
+    await tester.pump(const Duration(milliseconds: 149));
+    expect(find.byKey(const Key('dock-status')), findsNothing);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const Key('dock-status')), findsOneWidget);
+    expect(find.text('断开'), findsNothing);
+    expect(controller.phase, phase);
+
+    clip.emitNear(false);
+    await tester.pump(const Duration(milliseconds: 599));
+    expect(find.byKey(const Key('dock-status')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const Key('dock-dot')), findsOneWidget);
+    expect(controller.phase, phase);
+
+    clip.emitTray('pin');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const Key('dock-status')), findsOneWidget);
+    clip.emitNear(false);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(find.byKey(const Key('dock-status')), findsOneWidget);
+    expect(controller.phase, phase);
+  });
+
+  test('提示音默认关闭，旧配置没有该字段时仍关闭', () async {
+    expect(AppSettings.fromJson(<String, Object?>{}, DeviceKind.pc).notificationSound, isFalse);
+    final loaded = await loadController();
+    addTearDown(() async {
+      await loaded.controller.shutdown();
+      if (loaded.root.existsSync()) await loaded.root.delete(recursive: true);
+    });
+    expect(loaded.controller.settings.notificationSound, isFalse);
+    expect(dockGlassOpacity, inInclusiveRange(0.75, 0.85));
+    expect(dockSurface(Brightness.light).a, closeTo(dockGlassOpacity, 0.001));
+    expect(dockSurface(Brightness.dark).a, closeTo(dockGlassOpacity, 0.001));
+    await loaded.controller.updateSettings(
+      loaded.controller.settings.copyWith(notificationSound: true),
+    );
+    expect(loaded.controller.settings.notificationSound, isTrue);
+    final clip = loaded.controller.clipboard as MemoryClipboard;
+    expect(clip.syncedNotificationSound, isTrue);
+    final saved = jsonDecode(File('${loaded.root.path}/settings.json').readAsStringSync());
+    expect(saved['notificationSound'], isTrue);
   });
 }
 
