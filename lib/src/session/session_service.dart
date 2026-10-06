@@ -8,6 +8,7 @@ import '../core/frame_codec.dart';
 import '../core/log.dart';
 import '../core/models.dart';
 import '../core/session_crypto.dart';
+import 'link_policy.dart';
 
 class HelloView {
   HelloView({
@@ -105,6 +106,7 @@ class SessionService {
   _Link? _active;
   Future<void> _gate = Future<void>.value();
   int _port = 0;
+  int _linkSerial = 0;
 
   int get port => _port;
   bool get isReady => _active?.ready == true;
@@ -232,7 +234,14 @@ class SessionService {
     required bool emitDialErrors,
     Completer<void>? readySignal,
   }) async {
-    final link = _Link(socket: socket, dialer: dialer);
+    final link = _Link(
+      id: 'link-${++_linkSerial}',
+      socket: socket,
+      dialer: dialer,
+    );
+    cbLog(
+      'open id=${link.id} initiator=${dialer ? 'local' : 'remote'} intent=$intent',
+    );
     link.readySignal = readySignal;
     try {
       socket.setOption(SocketOption.tcpNoDelay, true);
@@ -240,10 +249,17 @@ class SessionService {
       final keep = await _serialized(() => _decideKeep(link));
       if (!keep) {
         final reason = link.closeReason ?? 'busy';
-        final shouldEmit = link.dialer && reason != 'yield';
-        _completeReady(link, BridgeException(reason));
+        final benign = reason == 'duplicate' || reason == 'yield' || reason == 'replaced';
+        final kept = _active != null && !_active!.closed;
+        if (benign && kept) {
+          _completeReady(link, null);
+        } else {
+          _completeReady(link, BridgeException(reason));
+        }
         await link.close();
-        if (shouldEmit) await onEvent(SessionClosedEvent(reason));
+        if (!benign && link.dialer) {
+          await onEvent(SessionClosedEvent(reason));
+        }
         return;
       }
       _active = link;
@@ -271,21 +287,27 @@ class SessionService {
       return true;
     }
     if (current.peerId == link.peerId) {
-      if (current.ready) {
+      final healthy = existingLinkHealthy(
+        closed: current.closed,
+        missedPings: current.missed,
+      );
+      if (decideDuplicate(existingHealthy: healthy) == DuplicateChoice.keepExisting) {
         link.silent = true;
-        link.closeReason = 'yield';
+        link.closeReason = 'duplicate';
+        cbLog(
+          'duplicate drop new=${link.id} keep=${current.id} peer=${link.peerId} '
+          'missed=${current.missed}',
+        );
         return false;
       }
-      final keepNew = _preferNew(link, current);
-      if (keepNew) {
-        current.silent = true;
-        current.closeReason = 'yield';
-        await current.close();
-        return true;
-      }
-      link.silent = true;
-      link.closeReason = 'yield';
-      return false;
+      cbLog(
+        'duplicate replace old=${current.id} with=${link.id} peer=${link.peerId} '
+        'reason=unhealthy missed=${current.missed}',
+      );
+      current.silent = true;
+      current.closeReason = 'replaced';
+      await current.close();
+      return true;
     }
     try {
       await link.sendEncryptedJson({
@@ -296,18 +318,6 @@ class SessionService {
     } catch (_) {}
     link.closeReason = 'busy';
     return false;
-  }
-
-  bool _preferNew(_Link incoming, _Link current) {
-    final localId = identity.deviceId;
-    final remoteId = incoming.peerId ?? '';
-    final smallerIsLocal = localId.compareTo(remoteId) < 0;
-    final designatedDialerIsLocal = smallerIsLocal;
-    final incomingMatches = incoming.dialer == designatedDialerIsLocal;
-    final currentMatches = current.dialer == designatedDialerIsLocal;
-    if (incomingMatches && !currentMatches) return true;
-    if (!incomingMatches && currentMatches) return false;
-    return incoming.dialer && !current.dialer;
   }
 
   Future<void> _handshake(
@@ -432,7 +442,12 @@ class SessionService {
     }
     link.watchdog = Timer.periodic(const Duration(seconds: 5), (_) {
       if (link.closed || !link.ready) return;
-      if (DateTime.now().difference(link.lastRx) > const Duration(seconds: 20)) {
+      link.missed += 1;
+      if (link.missed >= 3) {
+        cbLog(
+          'close id=${link.id} reason=${disconnectReasonLabel('timeout')} '
+          'initiator=${link.dialer ? 'local' : 'remote'} peer=${link.peerId} missed=${link.missed}',
+        );
         link.closeReason = 'timeout';
         unawaited(link.close());
         return;
@@ -470,6 +485,7 @@ class SessionService {
   Future<InnerMessage> _read(_Link link) async {
     final frame = await link.pump.next();
     link.lastRx = DateTime.now();
+    link.missed = 0;
     if (!frame.encrypted || link.cipher == null) {
       throw BridgeException('crypto', '会话未加密');
     }
@@ -556,6 +572,9 @@ class SessionService {
     if (link.ready || !link.localReadySent || !link.remoteReady) return;
     link.ready = true;
     link.pairTimer?.cancel();
+    cbLog(
+      'ready id=${link.id} peer=${link.peerId} initiator=${link.dialer ? 'local' : 'remote'}',
+    );
     await onEvent(SessionStatusEvent(LinkPhase.ready));
     _completeReady(link, null);
     await onEvent(
@@ -597,8 +616,17 @@ class SessionService {
     final wasActive = identical(_active, link);
     await link.close();
     if (wasActive) _active = null;
-    if (reason == 'yield') return;
+    cbLog(
+      'close id=${link.id} reason=${disconnectReasonLabel(reason)} '
+      'initiator=${link.dialer ? 'local' : 'remote'} peer=${link.peerId}',
+    );
+    if (reason == 'yield' || reason == 'duplicate' || reason == 'replaced') return;
     _completeReady(link, BridgeException(reason));
+    final otherLive = _active != null && !_active!.closed;
+    if (otherLive && !wasActive) {
+      cbLog('close ignored id=${link.id} kept=${_active!.id}');
+      return;
+    }
     if (emit || wasActive) await onEvent(SessionClosedEvent(reason));
   }
 
@@ -678,8 +706,10 @@ class _FramePump {
 }
 
 class _Link {
-  _Link({required this.socket, required this.dialer}) : pump = _FramePump(socket);
+  _Link({required this.id, required this.socket, required this.dialer})
+    : pump = _FramePump(socket);
 
+  final String id;
   final Socket socket;
   final bool dialer;
   final _FramePump pump;
@@ -703,6 +733,7 @@ class _Link {
   bool remoteReady = false;
   bool ready = false;
   bool closed = false;
+  int missed = 0;
   bool silent = false;
   String? closeReason;
   Completer<void>? readySignal;
