@@ -1,7 +1,16 @@
+import java.util.Base64
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val signingProps = Properties()
+val signingFile = rootProject.file("clipbridge-signing.properties")
+if (signingFile.exists()) {
+    signingFile.inputStream().use { signingProps.load(it) }
 }
 
 android {
@@ -29,11 +38,30 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val decoded = System.getenv("CLIPBRIDGE_KEYSTORE_BASE64")
+            val store = if (!decoded.isNullOrBlank()) {
+                val out = file("${layout.buildDirectory.get()}/clipbridge-ci.p12")
+                out.parentFile.mkdirs()
+                out.writeBytes(Base64.getDecoder().decode(decoded.trim()))
+                out
+            } else {
+                rootProject.file(signingProps.getProperty("storeFile", "clipbridge-release.jks"))
+            }
+            storeFile = store
+            storePassword = System.getenv("CLIPBRIDGE_STORE_PASSWORD")
+                ?: signingProps.getProperty("storePassword")
+            keyAlias = System.getenv("CLIPBRIDGE_KEY_ALIAS")
+                ?: signingProps.getProperty("keyAlias")
+            keyPassword = System.getenv("CLIPBRIDGE_KEY_PASSWORD")
+                ?: signingProps.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

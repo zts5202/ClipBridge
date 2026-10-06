@@ -57,12 +57,13 @@ jobs:
 
             - 发现与配对：同网 UDP 发现，新设备双方确认，已配对设备可自动重连
             - USB 网络共享：电脑主动探测手机（常见 192.168.42.129）并主动连出；新设备仍需双方确认
+            - Windows 改为贴边悬浮条和托盘，不再使用大主窗口。托盘中文仍按 UTF-16 显示
             - 已连接后不再循环提示已连接/已断开；心跳 5 秒、3 次未回应才断开，10 秒内恢复不弹通知
-            - 托盘菜单中文（显示主窗口、隐藏主窗口、暂停同步、退出）按 UTF-16 显示
+            - 这次升级需要先卸载 v1.1.x 再安装。v1.1.0 和 v1.1.1 的调试证书每次构建都不同，无法覆盖安装。从本版起 APK/AAB 使用固定的 ClipBridge 旁加载证书，之后可以直接覆盖升级
             - 双向同步文字、图片（PNG/JPEG/WebP）和文件，带进度、校验和失败重试
             - 电脑接收可选「仅剪贴板」，或「写入剪贴板并自动粘贴」；自动粘贴失败时仍保留剪贴板并通知
 
-            Android 的 APK 与 AAB 使用调试签名，便于直接安装试用。上架应用商店前请换成自己的签名。
+            Android 的 APK 与 AAB 使用仓库内固定的 ClipBridge 旁加载证书（SHA-256 前缀 6628A3CA），不是每次变化的调试证书。这不是上架密钥；上架前请换成自己的签名。
             真机 Wi-Fi、手机热点、记事本自动粘贴、Windows 托盘和 Android 前台服务仍需双机手测，步骤见 README 的手动测试清单。
           files: |
             build/app/outputs/flutter-apk/app-release.apk
@@ -89,10 +90,22 @@ jobs:
           $src = "build/windows/x64/runner/Release"
           if (!(Test-Path "$src/clipbridge.exe")) { throw "missing clipbridge.exe" }
           Compress-Archive -Path "$src/*" -DestinationPath "clipbridge-windows-x64.zip" -Force
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { throw "missing ISCC.exe" }
+          & $iscc "/DMyAppVersion=1.2.0" "windows\installer\clipbridge.iss"
+          if (!(Test-Path "build\windows\installer\ClipBridge-Setup.exe")) { throw "missing installer" }
       - uses: actions/upload-artifact@v4
         with:
           name: clipbridge-windows-x64
-          path: clipbridge-windows-x64.zip
+          path: |
+            clipbridge-windows-x64.zip
+            build/windows/installer/ClipBridge-Setup.exe
           if-no-files-found: error
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/v')
@@ -104,11 +117,14 @@ jobs:
 
             - 发现与配对：同网 UDP 发现，新设备双方确认，已配对设备可自动重连
             - USB 网络共享：电脑主动探测手机（常见 192.168.42.129）并主动连出；新设备仍需双方确认
+            - Windows 改为贴边悬浮条和托盘，不再使用大主窗口。托盘中文仍按 UTF-16 显示
             - 已连接后不再循环提示已连接/已断开；心跳 5 秒、3 次未回应才断开，10 秒内恢复不弹通知
-            - 托盘菜单中文（显示主窗口、隐藏主窗口、暂停同步、退出）按 UTF-16 显示
+            - 这次升级需要先卸载 v1.1.x 再安装。v1.1.0 和 v1.1.1 的调试证书每次构建都不同，无法覆盖安装。从本版起 APK/AAB 使用固定的 ClipBridge 旁加载证书，之后可以直接覆盖升级
             - 双向同步文字、图片（PNG/JPEG/WebP）和文件，带进度、校验和失败重试
             - 电脑接收可选「仅剪贴板」，或「写入剪贴板并自动粘贴」；自动粘贴失败时仍保留剪贴板并通知
 
-            Android 的 APK 与 AAB 使用调试签名，便于直接安装试用。上架应用商店前请换成自己的签名。
+            Android 的 APK 与 AAB 使用仓库内固定的 ClipBridge 旁加载证书（SHA-256 前缀 6628A3CA），不是每次变化的调试证书。这不是上架密钥；上架前请换成自己的签名。
             真机 Wi-Fi、手机热点、记事本自动粘贴、Windows 托盘和 Android 前台服务仍需双机手测，步骤见 README 的手动测试清单。
-          files: clipbridge-windows-x64.zip
+          files: |
+            clipbridge-windows-x64.zip
+            build/windows/installer/ClipBridge-Setup.exe

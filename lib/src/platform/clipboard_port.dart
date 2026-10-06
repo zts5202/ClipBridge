@@ -26,7 +26,16 @@ abstract class ClipboardPort {
   Future<ShareItem?> takePendingShare();
   Stream<ShareItem> get shares;
   Stream<String> get trayActions;
-  Future<void> trayUpdate({required String tooltip, required bool paused});
+  Stream<String> get fileDrops;
+  Stream<void> get monitorChanges;
+  Stream<bool> get pointerNear;
+  Future<void> trayUpdate({
+    required String tooltip,
+    required bool paused,
+    bool autoSync = false,
+    bool launchAtStartup = false,
+  });
+  Future<void> setLaunchAtStartup(bool enabled);
   Future<void> showWindow();
   Future<void> hideWindow();
   Future<void> quitApp();
@@ -41,6 +50,9 @@ class MemoryClipboard implements ClipboardPort {
   PasteResult pasteResult = const PasteResult(ok: true, reason: '');
   final _shares = StreamController<ShareItem>.broadcast();
   final _tray = StreamController<String>.broadcast();
+  final _drops = StreamController<String>.broadcast();
+  final _monitors = StreamController<void>.broadcast();
+  final _near = StreamController<bool>.broadcast();
 
   @override
   Future<String?> getText() async => text;
@@ -104,7 +116,24 @@ class MemoryClipboard implements ClipboardPort {
   Stream<String> get trayActions => _tray.stream;
 
   @override
-  Future<void> trayUpdate({required String tooltip, required bool paused}) async {}
+  Stream<String> get fileDrops => _drops.stream;
+
+  @override
+  Stream<void> get monitorChanges => _monitors.stream;
+
+  @override
+  Stream<bool> get pointerNear => _near.stream;
+
+  @override
+  Future<void> trayUpdate({
+    required String tooltip,
+    required bool paused,
+    bool autoSync = false,
+    bool launchAtStartup = false,
+  }) async {}
+
+  @override
+  Future<void> setLaunchAtStartup(bool enabled) async {}
 
   @override
   Future<void> showWindow() async {}
@@ -129,6 +158,13 @@ class PlatformClipboard implements ClipboardPort {
       } else if (call.method == 'onTray') {
         final action = call.arguments;
         if (action is String) _tray.add(action);
+      } else if (call.method == 'onFileDrop') {
+        final path = call.arguments;
+        if (path is String && path.isNotEmpty) _drops.add(path);
+      } else if (call.method == 'onMonitorsChanged') {
+        _monitors.add(null);
+      } else if (call.method == 'onPointerNear') {
+        if (call.arguments is bool) _near.add(call.arguments as bool);
       }
       return null;
     });
@@ -137,6 +173,9 @@ class PlatformClipboard implements ClipboardPort {
   static const _channel = MethodChannel('app.clipbridge/platform');
   final _shares = StreamController<ShareItem>.broadcast();
   final _tray = StreamController<String>.broadcast();
+  final _drops = StreamController<String>.broadcast();
+  final _monitors = StreamController<void>.broadcast();
+  final _near = StreamController<bool>.broadcast();
 
   Future<T?> _invoke<T>(String method, [Object? args]) async {
     try {
@@ -247,11 +286,32 @@ class PlatformClipboard implements ClipboardPort {
   Stream<String> get trayActions => _tray.stream;
 
   @override
+  Stream<String> get fileDrops => _drops.stream;
+
+  @override
+  Stream<void> get monitorChanges => _monitors.stream;
+
+  @override
+  Stream<bool> get pointerNear => _near.stream;
+
+  @override
   Future<void> trayUpdate({
     required String tooltip,
     required bool paused,
+    bool autoSync = false,
+    bool launchAtStartup = false,
   }) async {
-    await _invoke<void>('trayUpdate', {'tooltip': tooltip, 'paused': paused});
+    await _invoke<void>('trayUpdate', {
+      'tooltip': tooltip,
+      'paused': paused,
+      'autoSync': autoSync,
+      'launchAtStartup': launchAtStartup,
+    });
+  }
+
+  @override
+  Future<void> setLaunchAtStartup(bool enabled) async {
+    await _invoke<void>('setLaunchAtStartup', {'enabled': enabled});
   }
 
   @override

@@ -4,6 +4,9 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
+#include <flutter_windows.h>
+
+#include <dwmapi.h>
 #include <objidl.h>
 #include <shellapi.h>
 #include <wincodec.h>
@@ -20,13 +23,29 @@ using Microsoft::WRL::ComPtr;
 
 constexpr UINT kTrayCallback = WM_APP + 21;
 constexpr UINT kCmdShow = 2101;
-constexpr UINT kCmdHide = 2102;
 constexpr UINT kCmdPause = 2103;
 constexpr UINT kCmdQuit = 2104;
+constexpr UINT kCmdSync = 2105;
+constexpr UINT kCmdStartup = 2106;
+constexpr UINT_PTR kFullscreenTimer = 42;
+
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
 
 HWND g_hwnd = nullptr;
 bool g_paused = false;
+bool g_auto_sync = false;
+bool g_launch = false;
+bool g_allow_activate = false;
+bool g_user_visible = true;
+bool g_hidden_for_fullscreen = false;
+bool g_pointer_near = false;
 bool g_force_quit = false;
+std::string g_monitor_fp;
 bool g_tray_added = false;
 NOTIFYICONDATAW g_nid{};
 std::function<void()> g_quit;
@@ -89,6 +108,107 @@ bool MapBool(const flutter::EncodableMap& map, const char* key) {
   if (it == map.end()) return false;
   if (const auto* value = std::get_if<bool>(&it->second)) return *value;
   return false;
+}
+
+int MapInt(const flutter::EncodableMap& map, const char* key, int fallback) {
+  auto it = map.find(flutter::EncodableValue(std::string(key)));
+  if (it == map.end()) return fallback;
+  if (const auto* value = std::get_if<int32_t>(&it->second)) return *value;
+  if (const auto* value = std::get_if<int64_t>(&it->second)) {
+    return static_cast<int>(*value);
+  }
+  return fallback;
+}
+
+bool ForegroundCoversMonitor() {
+  HWND foreground = GetForegroundWindow();
+  if (!foreground || foreground == g_hwnd || !IsWindowVisible(foreground)) {
+    return false;
+  }
+  RECT window_rect;
+  if (!GetWindowRect(foreground, &window_rect)) return false;
+  if (window_rect.right - window_rect.left < 200 ||
+      window_rect.bottom - window_rect.top < 200) {
+    return false;
+  }
+  HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info;
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfo(monitor, &info)) return false;
+  const RECT& screen = info.rcMonitor;
+  constexpr int tolerance = 4;
+  return window_rect.left <= screen.left + tolerance &&
+         window_rect.top <= screen.top + tolerance &&
+         window_rect.right >= screen.right - tolerance &&
+         window_rect.bottom >= screen.bottom - tolerance;
+}
+
+std::string MonitorFingerprint() {
+  std::string fingerprint;
+  EnumDisplayMonitors(
+      nullptr, nullptr,
+      [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+        auto* text = reinterpret_cast<std::string*>(data);
+        MONITORINFO info;
+        info.cbSize = sizeof(info);
+        if (!GetMonitorInfo(monitor, &info)) return TRUE;
+        const UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+        *text += std::to_string(info.rcWork.left);
+        *text += ',';
+        *text += std::to_string(info.rcWork.top);
+        *text += ',';
+        *text += std::to_string(info.rcWork.right);
+        *text += ',';
+        *text += std::to_string(info.rcWork.bottom);
+        *text += ',';
+        *text += std::to_string(dpi);
+        *text += ';';
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&fingerprint));
+  return fingerprint;
+}
+
+bool PointerNearDock() {
+  if (!g_hwnd || !IsWindowVisible(g_hwnd)) return false;
+  POINT cursor;
+  if (!GetCursorPos(&cursor)) return false;
+  RECT rect;
+  if (!GetWindowRect(g_hwnd, &rect)) return false;
+  const HMONITOR monitor = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+  const UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  const int pad = dpi == 0 ? 8 : static_cast<int>(8.0 * dpi / 96.0 + 0.5);
+  InflateRect(&rect, pad, pad);
+  return PtInRect(&rect, cursor) == TRUE;
+}
+
+void PollFullscreenAndMonitors() {
+  if (!g_hwnd) return;
+  const bool fullscreen = ForegroundCoversMonitor();
+  if (fullscreen && IsWindowVisible(g_hwnd)) {
+    g_hidden_for_fullscreen = true;
+    ShowWindow(g_hwnd, SW_HIDE);
+  } else if (!fullscreen && g_hidden_for_fullscreen && g_user_visible) {
+    g_hidden_for_fullscreen = false;
+    ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+  }
+  const std::string fingerprint = MonitorFingerprint();
+  if (!fingerprint.empty() && fingerprint != g_monitor_fp) {
+    const bool first = g_monitor_fp.empty();
+    g_monitor_fp = fingerprint;
+    if (!first && g_channel) {
+      g_channel->InvokeMethod("onMonitorsChanged",
+                              std::make_unique<flutter::EncodableValue>());
+    }
+  }
+  const bool near = PointerNearDock();
+  if (near != g_pointer_near) {
+    g_pointer_near = near;
+    if (g_channel) {
+      g_channel->InvokeMethod(
+          "onPointerNear", std::make_unique<flutter::EncodableValue>(near));
+    }
+  }
 }
 
 const std::vector<uint8_t>* MapBytes(const flutter::EncodableMap& map,
@@ -409,29 +529,38 @@ void AddTrayIcon() {
 
 void ShowTrayMenu() {
   HMENU menu = CreatePopupMenu();
-  const std::wstring show = MenuText("\xE6\x98\xBE\xE7\xA4\xBA\xE4\xB8\xBB\xE7\xAA\x97\xE5\x8F\xA3");
-  const std::wstring hide = MenuText("\xE9\x9A\x90\xE8\x97\x8F\xE4\xB8\xBB\xE7\xAA\x97\xE5\x8F\xA3");
+  const std::wstring show =
+      MenuText("\xE6\x98\xBE\xE7\xA4\xBA\xE5\xB9\xB6\xE9\x92\x89\xE4\xBD\x8F\xE9\x9D\xA2\xE6\x9D\xBF");
   const std::wstring pause = MenuText(
       g_paused ? "\xE7\xBB\xA7\xE7\xBB\xAD\xE5\x90\x8C\xE6\xAD\xA5"
                : "\xE6\x9A\x82\xE5\x81\x9C\xE5\x90\x8C\xE6\xAD\xA5");
+  const std::wstring sync = MenuText(
+      g_auto_sync ? "\xE5\x85\xB3\xE9\x97\xAD\xE8\x87\xAA\xE5\x8A\xA8\xE5\x90\x8C\xE6\xAD\xA5"
+                  : "\xE5\xBC\x80\xE5\x90\xAF\xE8\x87\xAA\xE5\x8A\xA8\xE5\x90\x8C\xE6\xAD\xA5");
+  const std::wstring startup = MenuText(
+      g_launch ? "\xE5\x85\xB3\xE9\x97\xAD\xE5\xBC\x80\xE6\x9C\xBA\xE8\x87\xAA\xE5\x90\xAF"
+               : "\xE5\xBC\x80\xE5\x90\xAF\xE5\xBC\x80\xE6\x9C\xBA\xE8\x87\xAA\xE5\x90\xAF");
   const std::wstring quit = MenuText("\xE9\x80\x80\xE5\x87\xBA");
   AppendMenuW(menu, MF_STRING, kCmdShow, show.c_str());
-  AppendMenuW(menu, MF_STRING, kCmdHide, hide.c_str());
   AppendMenuW(menu, MF_STRING, kCmdPause, pause.c_str());
+  AppendMenuW(menu, MF_STRING, kCmdSync, sync.c_str());
+  AppendMenuW(menu, MF_STRING, kCmdStartup, startup.c_str());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kCmdQuit, quit.c_str());
   POINT point;
   GetCursorPos(&point);
+  HWND previous = GetForegroundWindow();
   SetForegroundWindow(g_hwnd);
   TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, g_hwnd, nullptr);
   DestroyMenu(menu);
+  if (previous && previous != g_hwnd) SetForegroundWindow(previous);
 }
 
 void ShowMainWindow() {
   if (!g_hwnd) return;
-  ShowWindow(g_hwnd, SW_SHOW);
-  if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
-  SetForegroundWindow(g_hwnd);
+  g_user_visible = true;
+  g_hidden_for_fullscreen = false;
+  ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
 }
 
 void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
@@ -506,6 +635,8 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
     if (method == "trayUpdate") {
       if (args) {
         g_paused = MapBool(*args, "paused");
+        g_auto_sync = MapBool(*args, "autoSync");
+        g_launch = MapBool(*args, "launchAtStartup");
         const std::wstring tip = Utf8ToWide(MapString(*args, "tooltip"));
         if (g_tray_added && !tip.empty()) {
           g_nid.uFlags = NIF_TIP;
@@ -517,12 +648,97 @@ void HandleMethod(const flutter::MethodCall<flutter::EncodableValue>& call,
       result->Success();
       return;
     }
+    if (method == "setFrame") {
+      if (g_hwnd && args) {
+        const int x = MapInt(*args, "x", 0);
+        const int y = MapInt(*args, "y", 0);
+        const int width = MapInt(*args, "w", 32);
+        const int height = MapInt(*args, "h", 88);
+        const int radius = MapInt(*args, "radius", 16);
+        bool show = true;
+        const auto show_it = args->find(flutter::EncodableValue(std::string("show")));
+        if (show_it != args->end()) {
+          if (const auto* value = std::get_if<bool>(&show_it->second)) show = *value;
+        }
+        if (width > 0 && height > 0) {
+          g_user_visible = show;
+          SetWindowPos(g_hwnd, HWND_TOPMOST, x, y, width, height,
+                       SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+          const int diameter = radius * 2;
+          HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+          SetWindowRgn(g_hwnd, region, TRUE);
+        }
+      }
+      result->Success();
+      return;
+    }
+    if (method == "getMonitors") {
+      flutter::EncodableList monitors;
+      EnumDisplayMonitors(
+          nullptr, nullptr,
+          [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+            auto* list = reinterpret_cast<flutter::EncodableList*>(data);
+            MONITORINFO info;
+            info.cbSize = sizeof(info);
+            if (!GetMonitorInfo(monitor, &info)) return TRUE;
+            const UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+            flutter::EncodableMap map;
+            map[flutter::EncodableValue("left")] =
+                flutter::EncodableValue(static_cast<int32_t>(info.rcWork.left));
+            map[flutter::EncodableValue("top")] =
+                flutter::EncodableValue(static_cast<int32_t>(info.rcWork.top));
+            map[flutter::EncodableValue("right")] =
+                flutter::EncodableValue(static_cast<int32_t>(info.rcWork.right));
+            map[flutter::EncodableValue("bottom")] =
+                flutter::EncodableValue(static_cast<int32_t>(info.rcWork.bottom));
+            map[flutter::EncodableValue("dpi")] =
+                flutter::EncodableValue(static_cast<int32_t>(dpi == 0 ? 96 : dpi));
+            list->push_back(flutter::EncodableValue(map));
+            return TRUE;
+          },
+          reinterpret_cast<LPARAM>(&monitors));
+      result->Success(flutter::EncodableValue(monitors));
+      return;
+    }
+    if (method == "allowActivate") {
+      g_allow_activate = args && MapBool(*args, "allow");
+      if (g_allow_activate && g_hwnd) SetForegroundWindow(g_hwnd);
+      result->Success();
+      return;
+    }
+    if (method == "setLaunchAtStartup") {
+      const bool enabled = args && MapBool(*args, "enabled");
+      HKEY key = nullptr;
+      if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0,
+                        KEY_SET_VALUE, &key) == ERROR_SUCCESS) {
+        if (enabled) {
+          wchar_t path[MAX_PATH];
+          const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+          if (length > 0 && length < MAX_PATH) {
+            std::wstring command = L"\"";
+            command += path;
+            command += L"\"";
+            RegSetValueExW(key, L"ClipBridge", 0, REG_SZ,
+                           reinterpret_cast<const BYTE*>(command.c_str()),
+                           static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+          }
+        } else {
+          RegDeleteValueW(key, L"ClipBridge");
+        }
+        RegCloseKey(key);
+      }
+      g_launch = enabled;
+      result->Success();
+      return;
+    }
     if (method == "showWindow") {
       ShowMainWindow();
       result->Success();
       return;
     }
     if (method == "hideWindow") {
+      g_user_visible = false;
       if (g_hwnd) ShowWindow(g_hwnd, SW_HIDE);
       result->Success();
       return;
@@ -565,9 +781,18 @@ void InstallClipBridgeChannel(flutter::BinaryMessenger* messenger,
         HandleMethod(call, std::move(result));
       });
   AddTrayIcon();
+  int backdrop = 3;
+  DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+  int corner = 2;
+  DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+  DragAcceptFiles(hwnd, TRUE);
+  // 100ms is enough to notice a cursor within ~8px and a fullscreen cover,
+  // without a Dart animation ticker. Each tick is a few Win32 queries.
+  SetTimer(hwnd, kFullscreenTimer, 100, nullptr);
 }
 
 void RemoveClipBridgeTray() {
+  if (g_hwnd) KillTimer(g_hwnd, kFullscreenTimer);
   if (!g_tray_added) return;
   Shell_NotifyIconW(NIM_DELETE, &g_nid);
   g_tray_added = false;
@@ -589,7 +814,7 @@ bool HandleClipBridgeMessage(HWND hwnd,
     case kTrayCallback:
       if (lparam == WM_LBUTTONUP || lparam == WM_LBUTTONDBLCLK) {
         ShowMainWindow();
-        InvokeTray("show");
+        InvokeTray("pin");
       } else if (lparam == WM_RBUTTONUP) {
         ShowTrayMenu();
       }
@@ -599,16 +824,19 @@ bool HandleClipBridgeMessage(HWND hwnd,
       switch (LOWORD(wparam)) {
         case kCmdShow:
           ShowMainWindow();
-          InvokeTray("show");
-          *result = 0;
-          return true;
-        case kCmdHide:
-          ShowWindow(hwnd, SW_HIDE);
-          InvokeTray("hide");
+          InvokeTray("pin");
           *result = 0;
           return true;
         case kCmdPause:
           InvokeTray("pause");
+          *result = 0;
+          return true;
+        case kCmdSync:
+          InvokeTray("autosync");
+          *result = 0;
+          return true;
+        case kCmdStartup:
+          InvokeTray("startup");
           *result = 0;
           return true;
         case kCmdQuit:
@@ -620,8 +848,34 @@ bool HandleClipBridgeMessage(HWND hwnd,
       }
     case WM_GETMINMAXINFO: {
       auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
-      info->ptMinTrackSize.x = 880;
-      info->ptMinTrackSize.y = 640;
+      info->ptMinTrackSize.x = 8;
+      info->ptMinTrackSize.y = 8;
+      *result = 0;
+      return true;
+    }
+    case WM_MOUSEACTIVATE:
+      *result = g_allow_activate ? MA_ACTIVATE : MA_NOACTIVATE;
+      return true;
+    case WM_TIMER:
+      if (wparam == kFullscreenTimer) {
+        PollFullscreenAndMonitors();
+        *result = 0;
+        return true;
+      }
+      return false;
+    case WM_DROPFILES: {
+      auto drop = reinterpret_cast<HDROP>(wparam);
+      const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      for (UINT index = 0; index < count; ++index) {
+        wchar_t path[MAX_PATH];
+        if (DragQueryFileW(drop, index, path, MAX_PATH) == 0) continue;
+        if (g_channel) {
+          g_channel->InvokeMethod(
+              "onFileDrop",
+              std::make_unique<flutter::EncodableValue>(WideToUtf8(path)));
+        }
+      }
+      DragFinish(drop);
       *result = 0;
       return true;
     }

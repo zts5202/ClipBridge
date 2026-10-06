@@ -2,7 +2,7 @@
 
 在同一局域网里，把 Android 手机和 Windows 电脑的剪贴板、图片、文件接在一起。不需要账号，不经过公网。
 
-当前版本：`1.1.1+3`  
+当前版本：`1.2.0+4`  
 应用 ID：`app.clipbridge.clipbridge`  
 开发与 CI 使用的 Flutter：**3.47.6 stable**（Dart **3.13.5**）
 
@@ -79,7 +79,9 @@ flutter build appbundle --release
 - `build/app/outputs/flutter-apk/app-release.apk`
 - `build/app/outputs/bundle/release/app-release.aab`
 
-当前 release 使用调试签名，方便直接安装。上架应用商店前请换成自己的签名配置，不要沿用这份调试密钥。
+Release 的 APK 和 AAB 使用仓库里的 `android/clipbridge-release.jks`（别名 `clipbridge`，口令写在 `android/clipbridge-signing.properties`）。这是一把专供旁加载的固定证书，证书 SHA-256 以 `6628A3CA` 开头。v1.1.0 和 v1.1.1 的 CI 每次都生成新的 debug keystore，所以装过那些版本的手机必须先卸载再安装 v1.2.0；从这一版起可以覆盖升级。
+
+这把密钥和口令是公开的，只保证「每次安装包是同一签名」，不能当作私密的上架密钥。谁拿到仓库都能用它签名。若要上架，请换成自己的密钥，或在 GitHub Actions 里设置 `CLIPBRIDGE_KEYSTORE_BASE64`、`CLIPBRIDGE_STORE_PASSWORD`、`CLIPBRIDGE_KEY_ALIAS`、`CLIPBRIDGE_KEY_PASSWORD`，构建时会优先用这组 secret。本环境没有仓库 secret 的写权限，所以密钥提交在仓库里。
 
 Windows：
 
@@ -89,7 +91,7 @@ flutter run -d windows
 flutter build windows --release
 ```
 
-可执行文件在 `build/windows/x64/runner/Release/clipbridge.exe`。分发时请带上该目录中的 DLL 与 `data` 文件夹，或使用 CI 打出的 `clipbridge-windows-x64.zip`。
+可执行文件在 `build/windows/x64/runner/Release/clipbridge.exe`。分发时请带上该目录中的 DLL 与 `data` 文件夹，或使用 CI 打出的 `clipbridge-windows-x64.zip` 和 Inno Setup 安装包 `ClipBridge-Setup.exe`（开始菜单快捷方式和卸载入口）。
 
 ## CI
 
@@ -97,9 +99,15 @@ flutter build windows --release
 
 1. Ubuntu：`flutter analyze` 与 `flutter test`
 2. Android：release APK 与 AAB，作为 `clipbridge-android` 构件
-3. Windows：`windows-latest` 上 `flutter build windows --release`，打包为 `clipbridge-windows-x64.zip`
+3. Windows：`windows-latest` 上 `flutter build windows --release`，打包为 `clipbridge-windows-x64.zip`，再用 Inno Setup 生成 `ClipBridge-Setup.exe`
 
 推送 `v*` 标签时，上述真实构建产物会附到对应的 GitHub Release。仓库里不存放预编译安装包。
+
+## Windows 贴边悬浮条
+
+电脑端不再打开大主窗口。启动后是屏幕右边缘的一条小条，加上托盘图标。光标进入小条约 8px 范围内，或停在小条上约 150ms，面板滑出；离开约 600ms 后收回；点击小条可以钉住。面板里有连接状态、接收方式、发送剪贴板或文件、最近 5 条记录。齿轮打开同一面板里的设置：已配对设备、忘记、重命名、自动重连、文件上限、左右贴边、开机自启，以及手动 IP、附近设备和接收目录。托盘菜单是「显示并钉住面板」「暂停/继续同步」「开启/关闭自动同步」「开启/关闭开机自启」「退出」，文字用 UTF-8 转成 UTF-16，避免乱码。
+
+窗口是无边框置顶工具窗口（`WS_EX_NOACTIVATE`、`WS_EX_TOOLWINDOW`），不出现在任务栏，滑出时不抢走当前窗口的键盘焦点，这样自动粘贴仍打到原来的前台程序。全屏窗口盖住显示器时小条会藏起来。位置按工作区边缘和比例记住，分辨率或显示器变化后会夹回可见区域。Android 仍是原来的四页界面。
 
 ## 热点和 Wi-Fi
 
@@ -137,8 +145,8 @@ flutter build windows --release
 
 - `flutter analyze`：无问题
 - `flutter test`：全部通过。覆盖帧编解码、握手签名、会话密钥与安全码、AES-GCM；以及本机回环上的发现、双方确认、文字双向、图片写入剪贴板、文件校验保存、超限拒绝、自动粘贴失败通知、已配对设备自动重连且不再弹确认、电脑剪贴板自动同步
-- `flutter build apk --release`：生成 `app-release.apk`（约 51MB，调试签名）
-- `flutter build appbundle --release`：生成 `app-release.aab`（约 50MB，调试签名）
+- `flutter build apk --release`：生成 `app-release.apk`（固定旁加载证书，不是每次变化的 debug keystore）
+- `flutter build appbundle --release`：生成 `app-release.aab`（同一把证书）
 
 没有在本环境执行、需要两台真实设备的部分：真机 Wi-Fi 与热点、记事本里的自动粘贴、Windows 托盘、Android 前台服务与系统分享、防火墙弹窗。Windows 工程在 Linux 上不能链接，由 GitHub Actions 的 `windows-latest` 编译。
 
@@ -157,8 +165,14 @@ flutter build windows --release
 - [ ] **USB 网络共享。** 手机打开 USB 网络共享，电脑不要手动填 IP。电脑应发现手机并连出。已配对且自动重连开着时直接连上；新设备仍弹出双方确认。若没有出现，允许 ClipBridge 通过公用网络，或手动输入手机地址。
 - [ ] **连接保持 30 分钟。** 两端配对后保持连接，Windows 不应循环弹出「已连接 / 已断开」。两端都打开自动重连时，调试日志里同一时刻只有一个活动连接（`open` / `ready` / `close`，带 connection id 和 initiator）。
 - [ ] **断网再恢复。** 关掉手机 Wi-Fi 再打开。超过约 10 秒才出现一次「已断开」，连上后再出现一次「已重新连接」。若 10 秒内就恢复，这两条通知都不出现。窗口和托盘状态会马上变化。
-- [ ] **托盘中文。** 右键四项为「显示主窗口」「隐藏主窗口」「暂停同步」或「继续同步」「退出」，不是乱码。通知和窗口标题也不乱码。
-- [ ] **托盘、通知、接收方式。** 电脑托盘可显示/隐藏窗口、暂停同步、退出。暂停时对端发送应失败且有提示。关闭窗口后进程仍在，托盘退出后进程结束。手机通知栏有前台服务；退到后台后仍能收到一条文字（需已授予通知）。切换接收方式后，下一次接收立即按新方式工作。
+- [ ] **只有小条和托盘。** 启动后没有大主窗口，任务栏没有 ClipBridge 按钮。小条默认在右边缘。
+- [ ] **滑出、收回、钉住。** 鼠标靠近小条后面板滑出，移开后收回。点击小条钉住后，鼠标离开也不收回。
+- [ ] **面板四块。** 能看到连接状态、在「仅剪贴板」和「自动粘贴」之间切换、发送当前剪贴板和文件、最近记录最多 5 条。点文字记录会复制，点图片或文件会打开所在位置，失败项可以重试。
+- [ ] **自动粘贴不丢焦点。** 面板滑出或收起时，记事本仍保持焦点。手机发来文字后，记事本出现内容。
+- [ ] **设置。** 齿轮页可以忘记设备、改文件上限、切换左/右贴边、开关开机自启。托盘里的自动同步和暂停同步也会立刻生效。
+- [ ] **托盘中文。** 右键为「显示并钉住面板」「暂停同步」或「继续同步」「开启自动同步」或「关闭自动同步」「开启开机自启」或「关闭开机自启」「退出」，不是乱码。
+- [ ] **外观。** 浅色和深色跟随系统。换到另一台显示器，或把缩放改成 125%、150%，小条仍贴在可见边缘，不跑到屏幕外。全屏播放或游戏时小条隐藏，退出全屏后回来。
+- [ ] **托盘与手机前台服务。** 暂停时对端发送应失败且有提示。托盘退出后进程结束。手机通知栏有前台服务；退到后台后仍能收到一条文字（需已授予通知）。
 - [ ] **分享。** 从相册或文件管理器分享一张图或一个文件到 ClipBridge，已连接时发出；未连接时提示，连接后可发送。
 - [ ] **隐私。** 断网后没有外连重试到公网地址的必要行为；清空记录后列表为空，已保存文件还在接收目录。
 
