@@ -170,7 +170,7 @@ class MainActivity : FlutterActivity() {
             )
             manager.createNotificationChannel(channel)
         }
-        val notification = android.app.Notification.Builder(this, BridgeService.ALERT_CHANNEL_ID)
+        val notification = androidx.core.app.NotificationCompat.Builder(this, BridgeService.ALERT_CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(body)
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
@@ -322,7 +322,7 @@ class MainActivity : FlutterActivity() {
         try {
             startActivity(view)
         } catch (_: Exception) {
-            showAlert("ClipBridge", path)
+            showAlert("ClipBridge", path, false)
         }
     }
 }
