@@ -53,7 +53,7 @@ class _DevicesPageState extends State<DevicesPage> {
           const EmptyHint(
             icon: Icons.wifi_find_rounded,
             title: '还没有发现设备',
-            message: '请让手机和电脑处于同一 Wi-Fi，或让电脑连接手机热点。两端都要打开 ClipBridge。若仍看不到，检查 Windows 是否把网络标成公用，并允许应用通过防火墙。也可以直接输入对方 IP。',
+            message: '请让手机和电脑处于同一 Wi-Fi、手机热点，或用 USB 网络共享。两端都要打开 ClipBridge。若仍看不到，检查 Windows 是否把网络标成公用，并允许应用通过防火墙。也可以直接输入对方 IP。',
           )
         else
           ...discovered.map((peer) {

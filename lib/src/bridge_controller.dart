@@ -240,11 +240,11 @@ class BridgeController extends ChangeNotifier {
       ),
     );
     _phase = LinkPhase.discovering;
-    _localAddresses = await localIpv4Addresses();
-    _autoTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => unawaited(attemptAutoReconnect()),
-    );
+    await _refreshLocalAddresses();
+    _autoTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_refreshLocalAddresses());
+      unawaited(attemptAutoReconnect());
+    });
     if (kind == DeviceKind.pc) {
       _clipTimer = Timer.periodic(
         const Duration(milliseconds: 500),
@@ -283,7 +283,28 @@ class BridgeController extends ChangeNotifier {
     }
   }
 
-  void bumpDiscovery() => _discovery.announceNow();
+  void bumpDiscovery() {
+    _discovery.announceNow();
+    unawaited(_refreshLocalAddresses());
+  }
+
+  Future<void> _refreshLocalAddresses() async {
+    if (_disposed) return;
+    final next = await localIpv4Addresses();
+    if (_disposed || _sameAddresses(next, _localAddresses)) return;
+    _localAddresses = next;
+    _touch(force: true);
+  }
+
+  bool _sameAddresses(List<String> next, List<String> current) {
+    if (next.length != current.length) return false;
+    final sortedNext = [...next]..sort();
+    final sortedCurrent = [...current]..sort();
+    for (var i = 0; i < sortedNext.length; i++) {
+      if (sortedNext[i] != sortedCurrent[i]) return false;
+    }
+    return true;
+  }
 
   @visibleForTesting
   void setDirectAnnouncements(List<DirectTarget> targets) {
